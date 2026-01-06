@@ -1,0 +1,21 @@
+Bootstrap: docker
+From: ubuntu:24.04
+
+%post
+  apt-get update
+  apt-get install -y --no-install-recommends \
+    ca-certificates \
+    libvulkan1 \
+    mesa-vulkan-drivers \
+    vulkan-tools \
+    libstdc++6 \
+    libgcc-s1 \
+  && rm -rf /var/lib/apt/lists/*
+
+%environment
+  export LC_ALL=C
+  export LANG=C
+  export RUST_BACKTRACE=1
+
+%runscript
+  exec "$@"

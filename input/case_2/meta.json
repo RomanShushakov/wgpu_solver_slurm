@@ -1,0 +1,12 @@
+{
+  "format": "wgpu-solver-backend-text-v0",
+  "n": 807,
+  "nnz": 11343,
+  "row_ptr_len": 808,
+  "col_idx_len": 11343,
+  "values_len": 11343,
+  "rhs_len": 807,
+  "x0_len": 807,
+  "block_starts_len": 140,
+  "x_ref_present": true
+}
