@@ -8,13 +8,13 @@ REPO_ROOT="$(cd "${REPO_ROOT:-.}" && pwd)"
 APPTAINER_VERSION="${APPTAINER_VERSION:-1.4.5}"
 
 # ---- Paths in repo ----
-BIN="${BIN:-${REPO_ROOT}/wgpu_solver_backend_bins/wgpu_solver_backend_cli}"
+BIN="${BIN:-${REPO_ROOT}/solver/wgpu_solver_backend_cli}"
 IMAGE="${IMAGE:-${REPO_ROOT}/apptainer/solver-runtime.sif}"
 DEF="${DEF:-${REPO_ROOT}/apptainer/solver-runtime.def}"
 
-CASE_DIR="${CASE_DIR:-${REPO_ROOT}/input/case_2}"
-OUT_DIR="${OUT_DIR:-${REPO_ROOT}/output/case_2}"
-X_REF="${X_REF:-${REPO_ROOT}/input/case_2/x_ref.bin}"
+CASE_DIR="${CASE_DIR:-${REPO_ROOT}/experiments/cases/case_2}"
+OUT_DIR="${OUT_DIR:-${REPO_ROOT}/experiments/runs/case_2}"
+X_REF="${X_REF:-${REPO_ROOT}/experiments/cases/case_2/x_ref.bin}"
 
 # ---- Solver params ----
 BACKEND="${BACKEND:-auto}"
@@ -23,8 +23,8 @@ REL_TOL="${REL_TOL:-1e-4}"
 ABS_TOL="${ABS_TOL:-1e-7}"
 
 # ---- Compare params ----
-CMP_REL_TOL="${CMP_REL_TOL:-1e-5}"
-CMP_ABS_TOL="${CMP_ABS_TOL:-1e-3}"
+CMP_REL_TOL="${CMP_REL_TOL:-1e-4}"
+CMP_ABS_TOL="${CMP_ABS_TOL:-1e-7}"
 TOP_K="${TOP_K:-10}"
 
 # ---- Slurm params ----
