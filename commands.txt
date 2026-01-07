@@ -26,3 +26,47 @@ USER_NAME=user1 bash scripts/20_provision_user_workspace.sh
 sudo -u user1 -H mkdir -p /home/user1/wgpu_workspace/experiments/cases
 sudo rsync -a --delete ./experiments/cases/test/ /home/user1/wgpu_workspace/experiments/cases/test/
 sudo chown -R user1:user1 /home/user1/wgpu_workspace/experiments
+
+
+bash scripts/30_export_usage_json.sh --since "now-24hours" --out usage.json
+
+
+export ROOT_DIR=$HOME/workdir/wgpu_solver_slurm
+export CASE_DIR=$ROOT_DIR/experiments/cases/case_3
+export OUT_DIR=$ROOT_DIR/experiments/runs/case_3
+export BIN=$ROOT_DIR/solvers/wgpu_solver_backend_cli
+export IMAGE=$ROOT_DIR/apptainer/solver-runtime.sif
+
+export BACKEND=auto
+export MAX_ITERS=2000
+export REL_TOL=1e-4
+export ABS_TOL=1e-7
+export APPTAINER_GPU=""
+
+sbatch \
+  --job-name=wgpu_case_3 \
+  --partition=local \
+  --time=00:10:00 \
+  --cpus-per-task=1 \
+  --mem=2G \
+  --output=slurm-case3-%j.out \
+  --error=slurm-case3-%j.err \
+  --export=ALL \
+  --wrap='
+mkdir -p "$OUT_DIR"
+
+apptainer exec $APPTAINER_GPU \
+  --bind "$ROOT_DIR:$ROOT_DIR" \
+  "$IMAGE" \
+  bash -lc "
+    set -euo pipefail
+    cd \"$ROOT_DIR\"
+    \"$BIN\" run-pcg-case \
+      --case-dir \"$CASE_DIR\" \
+      --max-iters \"$MAX_ITERS\" \
+      --rel-tol \"$REL_TOL\" \
+      --abs-tol \"$ABS_TOL\" \
+      --out-x \"$OUT_DIR/x.bin\" \
+      --out-metrics \"$OUT_DIR/metrics.json\"
+  "
+'

@@ -1,0 +1,132 @@
+{
+  "meta": {
+    "since": "now-24hours",
+    "until": null,
+    "filter_user": null,
+    "filter_account": null,
+    "generated_at": "2026-01-07T19:36:40Z",
+    "source": "sacct"
+  },
+  "jobs": [
+    {
+      "job_id": "1",
+      "user": "roman",
+      "account": "",
+      "partition": "local",
+      "state": "COMPLETED",
+      "submit_time": "2026-01-07T19:48:40",
+      "start_time": "2026-01-07T19:48:59",
+      "end_time": "2026-01-07T19:49:00",
+      "elapsed_raw": 1,
+      "alloc_cpus": 1,
+      "req_tres": "billing=1,cpu=1,mem=2G,node=1",
+      "alloc_tres": "billing=1,cpu=1,node=1",
+      "gpu_count": 0,
+      "cpu_seconds": 1,
+      "gpu_seconds": 0
+    },
+    {
+      "job_id": "2",
+      "user": "roman",
+      "account": "",
+      "partition": "local",
+      "state": "FAILED",
+      "submit_time": "2026-01-07T19:48:40",
+      "start_time": "2026-01-07T19:49:29",
+      "end_time": "2026-01-07T19:49:29",
+      "elapsed_raw": 0,
+      "alloc_cpus": 1,
+      "req_tres": "billing=1,cpu=1,mem=512M,node=1",
+      "alloc_tres": "billing=1,cpu=1,node=1",
+      "gpu_count": 0,
+      "cpu_seconds": 0,
+      "gpu_seconds": 0
+    },
+    {
+      "job_id": "7",
+      "user": "roman",
+      "account": "",
+      "partition": "local",
+      "state": "FAILED",
+      "submit_time": "2026-01-07T20:04:13",
+      "start_time": "2026-01-07T20:04:13",
+      "end_time": "2026-01-07T20:04:14",
+      "elapsed_raw": 1,
+      "alloc_cpus": 1,
+      "req_tres": "billing=1,cpu=1,mem=2G,node=1",
+      "alloc_tres": "billing=1,cpu=1,node=1",
+      "gpu_count": 0,
+      "cpu_seconds": 1,
+      "gpu_seconds": 0
+    },
+    {
+      "job_id": "8",
+      "user": "roman",
+      "account": "",
+      "partition": "local",
+      "state": "FAILED",
+      "submit_time": "2026-01-07T20:24:47",
+      "start_time": "2026-01-07T20:24:47",
+      "end_time": "2026-01-07T20:24:48",
+      "elapsed_raw": 1,
+      "alloc_cpus": 1,
+      "req_tres": "billing=1,cpu=1,mem=2G,node=1",
+      "alloc_tres": "billing=1,cpu=1,node=1",
+      "gpu_count": 0,
+      "cpu_seconds": 1,
+      "gpu_seconds": 0
+    },
+    {
+      "job_id": "9",
+      "user": "roman",
+      "account": "",
+      "partition": "local",
+      "state": "FAILED",
+      "submit_time": "2026-01-07T20:29:30",
+      "start_time": "2026-01-07T20:29:31",
+      "end_time": "2026-01-07T20:29:31",
+      "elapsed_raw": 0,
+      "alloc_cpus": 1,
+      "req_tres": "billing=1,cpu=1,mem=2G,node=1",
+      "alloc_tres": "billing=1,cpu=1,node=1",
+      "gpu_count": 0,
+      "cpu_seconds": 0,
+      "gpu_seconds": 0
+    },
+    {
+      "job_id": "10",
+      "user": "roman",
+      "account": "",
+      "partition": "local",
+      "state": "COMPLETED",
+      "submit_time": "2026-01-07T20:31:23",
+      "start_time": "2026-01-07T20:31:23",
+      "end_time": "2026-01-07T20:31:33",
+      "elapsed_raw": 10,
+      "alloc_cpus": 1,
+      "req_tres": "billing=1,cpu=1,mem=2G,node=1",
+      "alloc_tres": "billing=1,cpu=1,node=1",
+      "gpu_count": 0,
+      "cpu_seconds": 10,
+      "gpu_seconds": 0
+    }
+  ],
+  "summary_by_account": [
+    {
+      "account": "",
+      "jobs": 6,
+      "elapsed_seconds": 13,
+      "cpu_seconds": 13,
+      "gpu_seconds": 0
+    }
+  ],
+  "summary_by_user": [
+    {
+      "user": "roman",
+      "jobs": 6,
+      "elapsed_seconds": 13,
+      "cpu_seconds": 13,
+      "gpu_seconds": 0
+    }
+  ]
+}
