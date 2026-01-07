@@ -4,7 +4,6 @@ services:
     container_name: slurm-mariadb
     restart: unless-stopped
 
-    # Bind only to localhost so it's not exposed to the internet
     ports:
       - "127.0.0.1:3306:3306"
 
@@ -14,6 +13,8 @@ services:
       MARIADB_USER: "slurm"
       MARIADB_PASSWORD: "slurmpass_change_me"
 
+    command: ["--log-bin=0"]
+
     volumes:
       - slurm_mariadb_data:/var/lib/mysql
 
@@ -22,6 +23,8 @@ services:
       interval: 5s
       timeout: 3s
       retries: 30
+
+    stop_grace_period: 30s
 
 volumes:
   slurm_mariadb_data:

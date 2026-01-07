@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Run from repo root:  bash repro_local.sh
+# Run from repo root:  bash init_local.sh
 REPO_ROOT="$(cd "${REPO_ROOT:-.}" && pwd)"
 
 # ---- Versions ----
 APPTAINER_VERSION="${APPTAINER_VERSION:-1.4.5}"
 
 # ---- Paths in repo ----
-BIN="${BIN:-${REPO_ROOT}/solver/wgpu_solver_backend_cli}"
+BIN="${BIN:-${REPO_ROOT}/solvers/wgpu_solver_backend_cli}"
 IMAGE="${IMAGE:-${REPO_ROOT}/apptainer/solver-runtime.sif}"
 DEF="${DEF:-${REPO_ROOT}/apptainer/solver-runtime.def}"
 
-CASE_DIR="${CASE_DIR:-${REPO_ROOT}/experiments/cases/test}"
-OUT_DIR="${OUT_DIR:-${REPO_ROOT}/experiments/runs/test}"
-X_REF="${X_REF:-${REPO_ROOT}/experiments/cases/test/x_ref.bin}"
+CASE_DIR="${CASE_DIR:-${REPO_ROOT}/experiments/cases/init}"
+OUT_DIR="${OUT_DIR:-${REPO_ROOT}/experiments/runs/init}"
+X_REF="${X_REF:-${REPO_ROOT}/experiments/cases/init/x_ref.bin}"
 
 # ---- Solver params ----
 BACKEND="${BACKEND:-auto}"
@@ -30,14 +30,15 @@ TOP_K="${TOP_K:-10}"
 # ---- Slurm params ----
 PARTITION="${PARTITION:-local}"
 
-echo "=== repro_local ==="
+echo "=== init_local ==="
 echo "REPO_ROOT=${REPO_ROOT}"
 echo "BIN=${BIN}"
 echo "CASE_DIR=${CASE_DIR}"
 echo "OUT_DIR=${OUT_DIR}"
 echo "X_REF=${X_REF}"
 echo "APPTAINER_VERSION=${APPTAINER_VERSION}"
-echo "==================="
+echo "PARTITION=${PARTITION}"
+echo "=================="
 
 mkdir -p "${REPO_ROOT}/apptainer" "${REPO_ROOT}/slurm" "${OUT_DIR}"
 chmod +x "${BIN}"
@@ -72,6 +73,11 @@ CPUS=1
 sudo mkdir -p /var/lib/slurm/slurmctld /var/lib/slurm/slurmd
 sudo chown -R slurm:slurm /var/lib/slurm
 
+# --- Slurm log + run dirs (required: services run as slurm user) ---
+sudo mkdir -p /var/log/slurm /run/slurm
+sudo chown slurm:slurm /var/log/slurm /run/slurm
+sudo chmod 755 /var/log/slurm /run/slurm
+
 sudo tee /etc/slurm/slurm.conf >/dev/null <<EOF
 ClusterName=local
 SlurmctldHost=${HN}
@@ -91,8 +97,8 @@ SelectType=select/cons_tres
 SelectTypeParameters=CR_Core
 ProctrackType=proctrack/cgroup
 
-SlurmctldLogFile=/var/log/slurmctld.log
-SlurmdLogFile=/var/log/slurmd.log
+SlurmctldLogFile=/var/log/slurm/slurmctld.log
+SlurmdLogFile=/var/log/slurm/slurmd.log
 
 # local dev baseline:
 # - accounting disabled (Step 11 enables slurmdbd accounting)
@@ -106,7 +112,9 @@ PartitionName=${PARTITION} Nodes=${HN} Default=YES MaxTime=INFINITE State=UP
 EOF
 
 sudo systemctl enable --now slurmctld slurmd
+sudo systemctl restart munge
 sudo systemctl restart slurmctld slurmd
+
 sinfo
 
 # 4) Build Apptainer runtime

@@ -1,63 +1,19 @@
-STEP 0:
-
-init_local.sh:
-
-installs Slurm+Munge + Apptainer (1.4.5)
-writes minimal slurm.conf for single-node
-starts services
-builds Apptainer runtime SIF
-creates Slurm job scripts
-
-submits:
-- run-pcg-case job
-- compare-x job (depends on the first)
-
-
-purge_local.sh:
-
-stops services
-purges packages + configs + state
-cleans Apptainer caches
-
-
-additional check:
-sbatch slurm/run_info.sbatch
-
-
-
-
-STEP 10:
-
 chmod +x scripts/10_enable_accounting_mariadb_docker.sh
-scripts/10_enable_accounting_mariadb_docker.sh
-
-
-
-
-STEP 11:
+bash scripts/10_enable_accounting_mariadb_docker.sh
 
 chmod +x scripts/11_configure_slurmdbd.sh
-scripts/11_configure_slurmdbd.sh
-
-
-check:
-sudo sacctmgr show cluster
-scontrol show config | grep -E 'AccountingStorageType|AccountingStorageHost|AccountingStoragePort|JobAcctGatherType|ProctrackType|TaskPlugin|MpiDefault'
-
-
-
-STEP 12:
+bash scripts/11_configure_slurmdbd.sh
 
 chmod +x scripts/12_create_accounts_users.sh
-scripts/12_create_accounts_users.sh
+bash scripts/12_create_accounts_users.sh
 
 chmod +x scripts/12_undo_create_accounts_users.sh
+bash scripts/12_undo_create_accounts_users.sh
 
-Deletes only the workspace folder and Slurm accounting objects:
-scripts/12_undo_create_accounts_users.sh
 
-If you also want to remove the Linux user:
-DELETE_LINUX_USER=1 bash scripts/12_undo_create_accounts_users.sh
 
-If you want to remove Linux user + their home directory too:
-DELETE_LINUX_USER=1 DELETE_HOME=1 bash scripts/12_undo_create_accounts_users.sh
+DELETE_LINUX_USER=1 DELETE_HOME=1 DELETE_ACCOUNT=1 bash scripts/12_undo_create_accounts_users.sh
+bash scripts/12_create_accounts_users.sh
+
+sudo -u user1 ls -la /home/user1/wgpu_workspace/slurm_logs
+sacct -X -j <JOBID> -o JobIDRaw,User,Account,State,Elapsed,AllocCPUS,AllocTRES%40

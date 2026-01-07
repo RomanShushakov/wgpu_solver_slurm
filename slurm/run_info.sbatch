@@ -14,11 +14,11 @@ ROOT_DIR="${SLURM_SUBMIT_DIR:-$(pwd)}"
 cd "${ROOT_DIR}"
 
 IMAGE="${IMAGE:-${ROOT_DIR}/apptainer/solver-runtime.sif}"
-BIN="${BIN:-${ROOT_DIR}/solver/wgpu_solver_backend_cli}"
+BIN="${BIN:-${ROOT_DIR}/solvers/wgpu_solver_backend_cli}"
 
 echo "ROOT_DIR=${ROOT_DIR}"
 echo "BIN=${BIN}"
-ls -lah "${ROOT_DIR}/solver" || true
+ls -lah "${ROOT_DIR}/solvers" || true
 
 if [[ ! -x "${BIN}" ]]; then
   echo "ERROR: binary not found or not executable: ${BIN}"
