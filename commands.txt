@@ -21,28 +21,5 @@ cleans Apptainer caches
 
 
 
-cd ~/workdir/wgpu_solver_slurm
 
-export IMAGE="$PWD/apptainer/solver-runtime.sif"
-export BIN="$PWD/wgpu_solver_backend_bins/wgpu_solver_backend_cli"
-
-export CASE_DIR="$PWD/input/case_2"
-export OUT_X="$PWD/output/case_2/x.bin"
-export OUT_METRICS="$PWD/output/case_2/metrics.json"
-
-export BACKEND=auto
-export MAX_ITERS=2000
-export REL_TOL=1e-4
-export ABS_TOL=1e-7
-
-JOB1=$(sbatch --parsable slurm/run_pcg_case.sbatch)
-echo "PCG job: $JOB1"
-
-export X_REF="$PWD/input/case_2/x_ref.bin"
-export X="$PWD/output/case_2/x.bin"
-export CMP_REL_TOL=1e-5
-export CMP_ABS_TOL=1e-3
-export TOP_K=10
-
-JOB2=$(sbatch --parsable --dependency=afterok:$JOB1 slurm/compare_x.sbatch)
-echo "COMPARE job: $JOB2"
+sbatch slurm/run_info.sbatch
