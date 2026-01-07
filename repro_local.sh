@@ -12,9 +12,9 @@ BIN="${BIN:-${REPO_ROOT}/solver/wgpu_solver_backend_cli}"
 IMAGE="${IMAGE:-${REPO_ROOT}/apptainer/solver-runtime.sif}"
 DEF="${DEF:-${REPO_ROOT}/apptainer/solver-runtime.def}"
 
-CASE_DIR="${CASE_DIR:-${REPO_ROOT}/experiments/cases/case_2}"
-OUT_DIR="${OUT_DIR:-${REPO_ROOT}/experiments/runs/case_2}"
-X_REF="${X_REF:-${REPO_ROOT}/experiments/cases/case_2/x_ref.bin}"
+CASE_DIR="${CASE_DIR:-${REPO_ROOT}/experiments/cases/test}"
+OUT_DIR="${OUT_DIR:-${REPO_ROOT}/experiments/runs/test}"
+X_REF="${X_REF:-${REPO_ROOT}/experiments/cases/test/x_ref.bin}"
 
 # ---- Solver params ----
 BACKEND="${BACKEND:-auto}"
