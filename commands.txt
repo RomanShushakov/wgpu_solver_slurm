@@ -17,3 +17,12 @@ bash scripts/12_create_accounts_users.sh
 
 sudo -u user1 ls -la /home/user1/wgpu_workspace/slurm_logs
 sacct -X -j <JOBID> -o JobIDRaw,User,Account,State,Elapsed,AllocCPUS,AllocTRES%40
+
+
+chmod +x scripts/20_provision_user_workspace.sh
+USER_NAME=user1 bash scripts/20_provision_user_workspace.sh
+
+
+sudo -u user1 -H mkdir -p /home/user1/wgpu_workspace/experiments/cases
+sudo rsync -a --delete ./experiments/cases/test/ /home/user1/wgpu_workspace/experiments/cases/test/
+sudo chown -R user1:user1 /home/user1/wgpu_workspace/experiments

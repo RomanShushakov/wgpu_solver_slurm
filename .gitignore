@@ -1,2 +1,3 @@
 apptainer/solver-runtime.sif
 experiments/runs
+slurm/env.sh
