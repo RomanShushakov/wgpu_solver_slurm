@@ -13,8 +13,6 @@ submits:
 - compare-x job (depends on the first)
 
 
-
-
 purge_local.sh:
 
 stops services
@@ -22,13 +20,44 @@ purges packages + configs + state
 cleans Apptainer caches
 
 
-
-
+additional check:
 sbatch slurm/run_info.sbatch
 
 
 
-STEP 1:
+
+STEP 10:
 
 chmod +x scripts/10_enable_accounting_mariadb_docker.sh
 scripts/10_enable_accounting_mariadb_docker.sh
+
+
+
+
+STEP 11:
+
+chmod +x scripts/11_configure_slurmdbd.sh
+scripts/11_configure_slurmdbd.sh
+
+
+check:
+sudo sacctmgr show cluster
+scontrol show config | grep -E 'AccountingStorageType|AccountingStorageHost|AccountingStoragePort|JobAcctGatherType|ProctrackType|TaskPlugin|MpiDefault'
+
+
+
+STEP 12:
+
+chmod +x scripts/12_create_accounts_users.sh
+scripts/12_create_accounts_users.sh
+
+chmod +x scripts/12_undo_create_accounts_users.sh
+
+Deletes only the workspace folder and Slurm accounting objects:
+scripts/12_undo_create_accounts_users.sh
+
+If you also want to remove the Linux user:
+DELETE_LINUX_USER=1 bash scripts/12_undo_create_accounts_users.sh
+
+If you want to remove Linux user + their home directory too:
+DELETE_LINUX_USER=1 DELETE_HOME=1 bash scripts/12_undo_create_accounts_users.sh

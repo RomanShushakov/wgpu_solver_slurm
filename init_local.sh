@@ -94,7 +94,9 @@ ProctrackType=proctrack/cgroup
 SlurmctldLogFile=/var/log/slurmctld.log
 SlurmdLogFile=/var/log/slurmd.log
 
-# local dev: disable accounting / mpi noise
+# local dev baseline:
+# - accounting disabled (Step 11 enables slurmdbd accounting)
+# - keep MpiDefault=none to avoid pmix noise
 AccountingStorageType=accounting_storage/none
 JobAcctGatherType=jobacct_gather/none
 MpiDefault=none
