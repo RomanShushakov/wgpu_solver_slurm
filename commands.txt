@@ -1,4 +1,6 @@
-repro_local.sh:
+STEP 0:
+
+init_local.sh:
 
 installs Slurm+Munge + Apptainer (1.4.5)
 writes minimal slurm.conf for single-node
@@ -23,3 +25,10 @@ cleans Apptainer caches
 
 
 sbatch slurm/run_info.sbatch
+
+
+
+STEP 1:
+
+chmod +x scripts/10_enable_accounting_mariadb_docker.sh
+scripts/10_enable_accounting_mariadb_docker.sh
