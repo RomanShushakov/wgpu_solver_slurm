@@ -9,6 +9,9 @@ ACCOUNT_DESC="${ACCOUNT_DESC:-Customer 1}"
 
 # "user" = Linux username and Slurm user name (keep same for simplicity)
 USER_NAME="${USER_NAME:-user1}"
+# Linux password for the user (demo mode)
+# If empty, we do not set a password.
+USER_PASSWORD="${USER_PASSWORD:-}"
 
 # Whether to create Linux user + workspace directories
 CREATE_LINUX_USER="${CREATE_LINUX_USER:-1}"
@@ -55,6 +58,17 @@ if [[ "${CREATE_LINUX_USER}" == "1" ]]; then
     echo "Linux user '${USER_NAME}' already exists."
   fi
 
+  echo "[4.1] Set Linux password (optional)..."
+  if [[ -n "${USER_PASSWORD}" ]]; then
+    # Set password non-interactively
+    echo "${USER_NAME}:${USER_PASSWORD}" | sudo chpasswd
+    # Ensure password auth is allowed (in case user was locked previously)
+    sudo passwd -u "${USER_NAME}" >/dev/null 2>&1 || true
+    echo "Password set for linux user '${USER_NAME}'."
+  else
+    echo "USER_PASSWORD not set; leaving password unchanged."
+  fi
+
   # Ensure home exists and is owned by the user (handles manual deletions)
   if [[ ! -d "${WORKSPACE_ROOT}" ]]; then
     echo "Home directory missing: ${WORKSPACE_ROOT}. Recreating..."
@@ -77,6 +91,9 @@ else
 fi
 
 echo "[5/6] Submit a tiny billable job as ${USER_NAME}..."
+TEST_OUT="${WORKSPACE_DIR}/slurm_logs/slurm-acct-test-%j.out"
+TEST_ERR="${WORKSPACE_DIR}/slurm_logs/slurm-acct-test-%j.err"
+
 TEST_JOB_ID="$(
   sudo -u "${USER_NAME}" bash -lc "
     set -euo pipefail
@@ -86,8 +103,8 @@ TEST_JOB_ID="$(
       --partition='${PARTITION}' \
       --job-name='acct_test' \
       --chdir='${WORKSPACE_DIR}' \
-      --output='${WORKSPACE_DIR}/slurm_logs/slurm-acct-test-%j.out' \
-      --error='${WORKSPACE_DIR}/slurm_logs/slurm-acct-test-%j.err' \
+      --output='${TEST_OUT}' \
+      --error='${TEST_ERR}' \
       --wrap='echo hello_from_\$(whoami); sleep 2'
   "
 )"
@@ -145,4 +162,5 @@ fi
 
 echo
 echo "OK: Step 12 complete."
+echo "Login test (local): su - ${USER_NAME}"
 echo "Next: provisioning templates + per-user run wrapper (Step 20)."

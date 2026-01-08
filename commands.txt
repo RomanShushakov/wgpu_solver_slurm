@@ -28,6 +28,67 @@ sudo rsync -a --delete ./experiments/cases/test/ /home/user1/wgpu_workspace/expe
 sudo chown -R user1:user1 /home/user1/wgpu_workspace/experiments
 
 
+
+
+# Create a customer/account + user
+CLUSTER_NAME=local \
+ACCOUNT_NAME=customer1 \
+ACCOUNT_DESC="Customer 1" \
+USER_NAME=user1 \
+USER_PASSWORD='DemoPass123!' \
+CREATE_LINUX_USER=1 \
+PARTITION=local \
+bash scripts/12_create_accounts_users.sh
+
+# Provision workspace (copy solver + image + templates)
+USER_NAME=user1 bash scripts/20_provision_user_workspace.sh
+
+
+
+
+CLUSTER_NAME=local \
+ACCOUNT_NAME=customer1 \
+USER_NAME=user2 \
+USER_PASSWORD='DemoPass456!' \
+CREATE_LINUX_USER=1 \
+PARTITION=local \
+bash scripts/12_create_accounts_users.sh
+
+USER_NAME=user2 bash scripts/20_provision_user_workspace.sh
+
+
+
+CLUSTER_NAME=local \
+ACCOUNT_NAME=customer1 \
+USER_NAME=user1 \
+DELETE_WORKSPACE=1 \
+DELETE_ACCOUNT=1 \
+DELETE_LINUX_USER=1 \
+DELETE_HOME=1 \
+bash scripts/12_undo_create_accounts_users.sh
+
+
+
+
+bash init_local.sh
+
+export DB_ROOT_PASS="rootpass_change_me"
+bash scripts/10_enable_accounting_mariadb_docker.sh
+bash scripts/11_configure_slurmdbd.sh
+
+CLUSTER_NAME=local \
+ACCOUNT_NAME=customer1 \
+ACCOUNT_DESC="Customer 1" \
+USER_NAME=user1 \
+USER_PASSWORD='DemoPass123!' \
+CREATE_LINUX_USER=1 \
+PARTITION=local \
+bash scripts/12_create_accounts_users.sh
+
+USER_NAME=user1 bash scripts/20_provision_user_workspace.sh
+
+
+
 bash scripts/30_export_usage_json.sh --since "now-24hours" --out ./usage/usage.json
 
 
