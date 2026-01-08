@@ -28,8 +28,10 @@ sudo rsync -a --delete ./experiments/cases/test/ /home/user1/wgpu_workspace/expe
 sudo chown -R user1:user1 /home/user1/wgpu_workspace/experiments
 
 
-bash scripts/30_export_usage_json.sh --since "now-24hours" --out usage.json
+bash scripts/30_export_usage_json.sh --since "now-24hours" --out ./usage/usage.json
 
+
+export ROOT_DIR=$HOME/wgpu_workspace
 
 export ROOT_DIR=$HOME/workdir/wgpu_solver_slurm
 export CASE_DIR=$ROOT_DIR/experiments/cases/case_3
