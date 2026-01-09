@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=wgpu_pcg
-#SBATCH --output=slurm-pcg-%j.out
-#SBATCH --error=slurm-pcg-%j.err
+#SBATCH --output=slurm_logs/slurm-pcg-%j.out
+#SBATCH --error=slurm_logs/slurm-pcg-%j.err
 #SBATCH --time=01:00:00
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=2G

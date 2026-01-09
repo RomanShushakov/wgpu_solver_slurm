@@ -133,3 +133,11 @@ apptainer exec $APPTAINER_GPU \
       --out-metrics \"$OUT_DIR/metrics.json\"
   "
 '
+
+
+
+
+bash scripts/31_export_usage_json_v2.sh \
+  --since "2026-01-07T00:00:00" \
+  --until "2026-01-08T00:00:00" \
+  --out usage_v2.json

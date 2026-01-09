@@ -1,5 +1,5 @@
 Bootstrap: docker
-From: ubuntu:24.04
+From: debian:bookworm-slim
 
 %post
   apt-get update
@@ -7,7 +7,6 @@ From: ubuntu:24.04
     ca-certificates \
     libvulkan1 \
     mesa-vulkan-drivers \
-    vulkan-tools \
     libstdc++6 \
     libgcc-s1 \
   && rm -rf /var/lib/apt/lists/*

@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=wgpu_cmp
-#SBATCH --output=slurm-cmp-%j.out
-#SBATCH --error=slurm-cmp-%j.err
+#SBATCH --output=slurm_logs/slurm-cmp-%j.out
+#SBATCH --error=slurm_logs/slurm-cmp-%j.err
 #SBATCH --time=00:10:00
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=512M

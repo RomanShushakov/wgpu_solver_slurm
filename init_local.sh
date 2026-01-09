@@ -121,7 +121,7 @@ sinfo
 echo "[5/6] Building Apptainer runtime SIF..."
 cat > "${DEF}" <<'EOF'
 Bootstrap: docker
-From: ubuntu:24.04
+From: debian:bookworm-slim
 
 %post
   apt-get update
@@ -129,7 +129,6 @@ From: ubuntu:24.04
     ca-certificates \
     libvulkan1 \
     mesa-vulkan-drivers \
-    vulkan-tools \
     libstdc++6 \
     libgcc-s1 \
   && rm -rf /var/lib/apt/lists/*
@@ -151,8 +150,8 @@ echo "[6/6] Writing sbatch scripts + submitting jobs..."
 cat > "${REPO_ROOT}/slurm/run_pcg_case.sbatch" <<'EOF'
 #!/bin/bash
 #SBATCH --job-name=wgpu_pcg
-#SBATCH --output=slurm-pcg-%j.out
-#SBATCH --error=slurm-pcg-%j.err
+#SBATCH --output=slurm_logs/slurm-pcg-%j.out
+#SBATCH --error=slurm_logs/slurm-pcg-%j.err
 #SBATCH --time=01:00:00
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=2G
@@ -193,8 +192,8 @@ chmod +x "${REPO_ROOT}/slurm/run_pcg_case.sbatch"
 cat > "${REPO_ROOT}/slurm/compare_x.sbatch" <<'EOF'
 #!/bin/bash
 #SBATCH --job-name=wgpu_cmp
-#SBATCH --output=slurm-cmp-%j.out
-#SBATCH --error=slurm-cmp-%j.err
+#SBATCH --output=slurm_logs/slurm-cmp-%j.out
+#SBATCH --error=slurm_logs/slurm-cmp-%j.err
 #SBATCH --time=00:10:00
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=512M
