@@ -12,46 +12,63 @@ Examples:
 EOF
 }
 
-SINCE=""
-UNTIL=""
+ALL_USERS=0
 FILTER_USER=""
 FILTER_ACCOUNT=""
+SINCE=""
+UNTIL=""
 OUT="usage_v2.json"
 
+# parse args (add --all-users)
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --since)   SINCE="${2:-}"; shift 2;;
-    --until)   UNTIL="${2:-}"; shift 2;;
-    --user)    FILTER_USER="${2:-}"; shift 2;;
-    --account) FILTER_ACCOUNT="${2:-}"; shift 2;;
-    --out)     OUT="${2:-}"; shift 2;;
-    -h|--help) usage; exit 0;;
-    *) echo "Unknown arg: $1"; usage; exit 2;;
+    --since) SINCE="$2"; shift 2;;
+    --until) UNTIL="$2"; shift 2;;
+    --out) OUT="$2"; shift 2;;
+    --user) FILTER_USER="$2"; shift 2;;
+    --account) FILTER_ACCOUNT="$2"; shift 2;;
+    --all-users) ALL_USERS=1; shift;;
+    *)
+      echo "Unknown arg: $1" >&2
+      exit 2
+      ;;
   esac
 done
 
-[[ -n "${SINCE}" ]] || { echo "ERROR: --since is required"; usage; exit 2; }
+# auto-enable all-users if root and no explicit --user
+if [[ "${EUID}" -eq 0 && -z "${FILTER_USER}" ]]; then
+  ALL_USERS=1
+fi
 
-command -v sacct >/dev/null 2>&1 || { echo "ERROR: sacct not found (install slurm-client)"; exit 2; }
-command -v jq >/dev/null 2>&1 || { echo "ERROR: jq not found (sudo apt-get install -y jq)"; exit 2; }
+sacct_flags=(-n -P -X)   # parseable, no headers, no steps
+if [[ "${ALL_USERS}" -eq 1 ]]; then
+  sacct_flags+=(-a)
+fi
 
-FIELDS="JobIDRaw,User,Account,Partition,State,Submit,Start,End,ElapsedRaw,AllocCPUS,ReqTRES,AllocTRES"
+time_flags=()
+[[ -n "${SINCE}" ]] && time_flags+=(-S "${SINCE}")
+[[ -n "${UNTIL}" ]] && time_flags+=(-E "${UNTIL}")
 
-SACCT_ARGS=(-n -P -X -o "${FIELDS}" -S "${SINCE}")
-[[ -n "${UNTIL}" ]] && SACCT_ARGS+=(-E "${UNTIL}")
-[[ -n "${FILTER_USER}" ]] && SACCT_ARGS+=(-u "${FILTER_USER}")
-[[ -n "${FILTER_ACCOUNT}" ]] && SACCT_ARGS+=(-A "${FILTER_ACCOUNT}")
+where_flags=()
+[[ -n "${FILTER_USER}" ]] && where_flags+=(-u "${FILTER_USER}")
+[[ -n "${FILTER_ACCOUNT}" ]] && where_flags+=(-A "${FILTER_ACCOUNT}")
 
-RAW="$(sacct "${SACCT_ARGS[@]}" || true)"
+FIELDS="JobIDRaw,User,Account,Partition,State,ElapsedRaw,AllocCPUS,ReqTRES,AllocTRES,Submit,Start,End,JobName"
+
+RAW="$(sacct "${sacct_flags[@]}" "${time_flags[@]}" "${where_flags[@]}" -o "${FIELDS}")"
 
 jq -Rn \
   --arg since "${SINCE}" \
   --arg until "${UNTIL}" \
   --arg user "${FILTER_USER}" \
-  --arg account "${FILTER_ACCOUNT}" \
-  '
+  --arg account "${FILTER_ACCOUNT}" '
   def to_int:
     if . == null or . == "" then 0 else (try (.|tonumber) catch 0) end;
+
+  def tres_int($key):
+    ( . // "" )
+    | ( capture("(^|,)" + $key + "=(?<n>[0-9]+)")? | .n ) // "0"
+    | to_int;
 
   [ inputs
     | select(length > 0)
@@ -62,14 +79,15 @@ jq -Rn \
         account:     ($f[2] // ""),
         partition:   ($f[3] // ""),
         state:       ($f[4] // ""),
-        submit_time: ($f[5] // ""),
-        start_time:  ($f[6] // ""),
-        end_time:    ($f[7] // ""),
-        elapsed_sec: (($f[8] // "") | to_int),
-        alloc_cpus:  (($f[9] // "") | to_int),
-        req_tres:    ($f[10] // ""),
-        alloc_tres:  ($f[11] // "")
+        elapsed_sec: (($f[5] // "") | to_int),
+        alloc_cpus:  (($f[6] // "") | to_int),
+        alloc_tres:  ($f[7] // "")
       }
+    | .billing = (.alloc_tres | tres_int("billing") | if . == 0 then (.alloc_cpus) else . end)
+    | .gpu_count = (.alloc_tres | tres_int("gres/gpu"))
+    | .cpu_seconds = (.elapsed_sec * .alloc_cpus)
+    | .billing_seconds = (.elapsed_sec * .billing)
+    | .gpu_seconds = (.elapsed_sec * .gpu_count)
   ] as $jobs
   | {
       meta: {
@@ -82,8 +100,7 @@ jq -Rn \
         schema: "usage.v2"
       },
       jobs: $jobs
-    }
-  ' <<< "${RAW}" > "${OUT}"
+    }' <<< "${RAW}" > "${OUT}"
 
 echo "OK: wrote ${OUT}"
 jq '.meta, {jobs: (.jobs|length)}' "${OUT}"

@@ -47,3 +47,18 @@ log "COMPARE job: ${JOB2} (afterok:${JOB1})"
 
 log "Track: squeue"
 log "Accounting: sacct -X -j ${JOB1},${JOB2} --format=JobIDRaw,User,Account,State,Elapsed,AllocTRES%40"
+
+RUN_LOG_DIR="${OUT_DIR}/slurm_logs"
+mkdir -p "${RUN_LOG_DIR}"
+
+JOB_IDS_FILE="${RUN_LOG_DIR}/job_ids.txt"
+{
+  echo "submitted_at=$(date -Is)"
+  echo "partition=${PARTITION}"
+  echo "case_dir=${CASE_DIR}"
+  echo "out_dir=${OUT_DIR}"
+  echo "job_pcg=${JOB1}"
+  echo "job_cmp=${JOB2}"
+} > "${JOB_IDS_FILE}"
+
+log "Wrote job ids: ${JOB_IDS_FILE}"

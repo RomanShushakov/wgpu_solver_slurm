@@ -1,63 +1,153 @@
-chmod +x scripts/10_enable_accounting_mariadb_docker.sh
-bash scripts/10_enable_accounting_mariadb_docker.sh
+###############################################################################
+# 0) INIT / RESET
+###############################################################################
 
-chmod +x scripts/11_configure_slurmdbd.sh
+# (optional) full reset
+bash scripts/12_undo_create_accounts_users.sh USER_NAME=user1 ACCOUNT_NAME=customer1 DELETE_WORKSPACE=1 DELETE_ACCOUNT=1 DELETE_LINUX_USER=1 DELETE_HOME=1 || true
+bash scripts/12_undo_create_accounts_users.sh USER_NAME=user2 ACCOUNT_NAME=customer2 DELETE_WORKSPACE=1 DELETE_ACCOUNT=1 DELETE_LINUX_USER=1 DELETE_HOME=1 || true
+bash scripts/12_undo_create_accounts_users.sh USER_NAME=user3 ACCOUNT_NAME=customer2 DELETE_WORKSPACE=1 DELETE_ACCOUNT=0 DELETE_LINUX_USER=1 DELETE_HOME=1 || true
+
+# purge everything (Slurm/Munge/Apptainer). Only if you really want a clean system.
+# bash purge_local.sh
+
+# init base single-node slurm + apptainer runtime
+bash init_local.sh
+
+# Step 10-11: DB + slurmdbd accounting
+export DB_ROOT_PASS="rootpass_change_me"
+bash scripts/10_enable_accounting_mariadb_docker.sh
 bash scripts/11_configure_slurmdbd.sh
 
-chmod +x scripts/12_create_accounts_users.sh
-bash scripts/12_create_accounts_users.sh
-
-chmod +x scripts/12_undo_create_accounts_users.sh
-bash scripts/12_undo_create_accounts_users.sh
-
+# (recommended for demo) enforce that jobs must have valid associations
+# (do once; after that restart)
+# echo "AccountingStorageEnforce=associations" | sudo tee -a /etc/slurm/slurm.conf
+# sudo systemctl restart slurmctld slurmd
 
 
-DELETE_LINUX_USER=1 DELETE_HOME=1 DELETE_ACCOUNT=1 bash scripts/12_undo_create_accounts_users.sh
-bash scripts/12_create_accounts_users.sh
+###############################################################################
+# 1) CREATE USERS + PROVISION WORKSPACES
+###############################################################################
 
-sudo -u user1 ls -la /home/user1/wgpu_workspace/slurm_logs
-sacct -X -j <JOBID> -o JobIDRaw,User,Account,State,Elapsed,AllocCPUS,AllocTRES%40
-
-
-chmod +x scripts/20_provision_user_workspace.sh
-USER_NAME=user1 bash scripts/20_provision_user_workspace.sh
-
-
-sudo -u user1 -H mkdir -p /home/user1/wgpu_workspace/experiments/cases
-sudo rsync -a --delete ./experiments/cases/test/ /home/user1/wgpu_workspace/experiments/cases/test/
-sudo chown -R user1:user1 /home/user1/wgpu_workspace/experiments
-
-
-
-
-# Create a customer/account + user
+# user1 under customer1 with password pass1
 CLUSTER_NAME=local \
 ACCOUNT_NAME=customer1 \
 ACCOUNT_DESC="Customer 1" \
 USER_NAME=user1 \
-USER_PASSWORD='DemoPass123!' \
+USER_PASSWORD='pass1' \
 CREATE_LINUX_USER=1 \
 PARTITION=local \
 bash scripts/12_create_accounts_users.sh
 
-# Provision workspace (copy solver + image + templates)
-USER_NAME=user1 bash scripts/20_provision_user_workspace.sh
+USER_NAME=user1 COPY_TEST_CASE=0 RSYNC_DELETE=1 bash scripts/20_provision_user_workspace.sh
 
 
-
-
+# user2 under customer2 with password pass2
 CLUSTER_NAME=local \
-ACCOUNT_NAME=customer1 \
+ACCOUNT_NAME=customer2 \
+ACCOUNT_DESC="Customer 2" \
 USER_NAME=user2 \
-USER_PASSWORD='DemoPass456!' \
+USER_PASSWORD='pass2' \
 CREATE_LINUX_USER=1 \
 PARTITION=local \
 bash scripts/12_create_accounts_users.sh
 
-USER_NAME=user2 bash scripts/20_provision_user_workspace.sh
+USER_NAME=user2 COPY_TEST_CASE=0 RSYNC_DELETE=1 bash scripts/20_provision_user_workspace.sh
 
 
+# user3 under customer2 with password pass3
+CLUSTER_NAME=local \
+ACCOUNT_NAME=customer2 \
+ACCOUNT_DESC="Customer 2" \
+USER_NAME=user3 \
+USER_PASSWORD='pass3' \
+CREATE_LINUX_USER=1 \
+PARTITION=local \
+bash scripts/12_create_accounts_users.sh
 
+USER_NAME=user3 COPY_TEST_CASE=0 RSYNC_DELETE=1 bash scripts/20_provision_user_workspace.sh
+
+
+###############################################################################
+# 2) COPY CASES INTO USER WORKSPACES (from repo -> user home)
+###############################################################################
+
+# case_1 -> user1
+sudo -u user1 -H mkdir -p /home/user1/wgpu_workspace/experiments/cases/case_1
+sudo rsync -a --delete ./experiments/cases/case_1/ /home/user1/wgpu_workspace/experiments/cases/case_1/
+sudo chown -R user1:user1 /home/user1/wgpu_workspace/experiments/cases/case_1
+
+# case_2 -> user2
+sudo -u user2 -H mkdir -p /home/user2/wgpu_workspace/experiments/cases/case_2
+sudo rsync -a --delete ./experiments/cases/case_2/ /home/user2/wgpu_workspace/experiments/cases/case_2/
+sudo chown -R user2:user2 /home/user2/wgpu_workspace/experiments/cases/case_2
+
+# case_3 -> user3
+sudo -u user3 -H mkdir -p /home/user3/wgpu_workspace/experiments/cases/case_3
+sudo rsync -a --delete ./experiments/cases/case_3/ /home/user3/wgpu_workspace/experiments/cases/case_3/
+sudo chown -R user3:user3 /home/user3/wgpu_workspace/experiments/cases/case_3
+
+
+###############################################################################
+# 3) RUN CASES (as each user, fully from CLI)
+###############################################################################
+# NOTE:
+# - submit_case.sh uses env.sh for CASE_DIR/OUT_DIR etc.
+# - easiest demo: export CASE_DIR/OUT_DIR on the fly before calling submit_case.sh
+
+# user1 runs case_1
+sudo -u user1 -H bash -lc '
+  set -euo pipefail
+  cd ~/wgpu_workspace
+  export CASE_DIR=$HOME/wgpu_workspace/experiments/cases/case_1
+  export OUT_DIR=$HOME/wgpu_workspace/experiments/runs/case_1
+  ./slurm/submit_case.sh
+'
+
+# user2 runs case_2
+sudo -u user2 -H bash -lc '
+  set -euo pipefail
+  cd ~/wgpu_workspace
+  export CASE_DIR=$HOME/wgpu_workspace/experiments/cases/case_2
+  export OUT_DIR=$HOME/wgpu_workspace/experiments/runs/case_2
+  ./slurm/submit_case.sh
+'
+
+# user3 runs case_3
+sudo -u user3 -H bash -lc '
+  set -euo pipefail
+  cd ~/wgpu_workspace
+  export CASE_DIR=$HOME/wgpu_workspace/experiments/cases/case_3
+  export OUT_DIR=$HOME/wgpu_workspace/experiments/runs/case_3
+  ./slurm/submit_case.sh
+'
+
+# Track queue + logs (optional)
+squeue
+# Example: check accounting for latest jobs (replace JOBIDS)
+# sacct -X -j <JOB1>,<JOB2> -o JobIDRaw,User,Account,Partition,State,Elapsed,AllocCPUS,AllocTRES%60
+
+
+###############################################################################
+# 4) USAGE EXPORT + SUMMARY + REPORT (Steps 31/32/33)
+###############################################################################
+
+# collect (all users)
+sudo bash scripts/31_export_usage_json_v2.sh --all-users \
+  --since "now-24hours" \
+  --out usage/usage_v2.json
+
+# summarize
+bash scripts/32_summarize_usage.sh usage/usage_v2.json usage/usage_summary.json
+
+# report (prints from usage_summary.json by default in your script)
+bash scripts/33_report_usage.sh usage/usage_summary.json usage/usage_report.md usage/usage_report.csv
+
+
+###############################################################################
+# 5) UNDO (remove each user separately)
+###############################################################################
+
+# remove user1 + customer1 (only if you want to remove the account too)
 CLUSTER_NAME=local \
 ACCOUNT_NAME=customer1 \
 USER_NAME=user1 \
@@ -67,34 +157,48 @@ DELETE_LINUX_USER=1 \
 DELETE_HOME=1 \
 bash scripts/12_undo_create_accounts_users.sh
 
-
-
-
-bash init_local.sh
-
-export DB_ROOT_PASS="rootpass_change_me"
-bash scripts/10_enable_accounting_mariadb_docker.sh
-bash scripts/11_configure_slurmdbd.sh
-
+# remove user2 (and customer2? careful: customer2 still used by user3)
 CLUSTER_NAME=local \
-ACCOUNT_NAME=customer1 \
-ACCOUNT_DESC="Customer 1" \
-USER_NAME=user1 \
-USER_PASSWORD='DemoPass123!' \
-CREATE_LINUX_USER=1 \
-PARTITION=local \
-bash scripts/12_create_accounts_users.sh
+ACCOUNT_NAME=customer2 \
+USER_NAME=user2 \
+DELETE_WORKSPACE=1 \
+DELETE_ACCOUNT=0 \
+DELETE_LINUX_USER=1 \
+DELETE_HOME=1 \
+bash scripts/12_undo_create_accounts_users.sh
 
-USER_NAME=user1 bash scripts/20_provision_user_workspace.sh
+# remove user3 (now you can delete customer2 too if empty)
+CLUSTER_NAME=local \
+ACCOUNT_NAME=customer2 \
+USER_NAME=user3 \
+DELETE_WORKSPACE=1 \
+DELETE_ACCOUNT=1 \
+DELETE_LINUX_USER=1 \
+DELETE_HOME=1 \
+bash scripts/12_undo_create_accounts_users.sh
 
 
+###############################################################################
+# 6) FULL PURGE (optional, last resort)
+###############################################################################
+# bash purge_local.sh
 
-bash scripts/30_export_usage_json.sh --since "now-24hours" --out ./usage/usage.json
 
+###############################################################################
+# ROOT DEMO: run case_3 directly from repo (PCG + CMP split)
+###############################################################################
+
+cd $HOME/workdir/wgpu_solver_slurm
+
+command -v sbatch >/dev/null 2>&1 || {
+  echo "ERROR: sbatch not found. Install slurm-client (or slurm-wlm) first." >&2
+  exit 1
+}
 
 export ROOT_DIR=$HOME/workdir/wgpu_solver_slurm
 export CASE_DIR=$ROOT_DIR/experiments/cases/case_3
 export OUT_DIR=$ROOT_DIR/experiments/runs/case_3
+
 export BIN=$ROOT_DIR/solvers/wgpu_solver_backend_cli
 export IMAGE=$ROOT_DIR/apptainer/solver-runtime.sif
 
@@ -102,81 +206,40 @@ export BACKEND=auto
 export MAX_ITERS=2000
 export REL_TOL=1e-4
 export ABS_TOL=1e-7
+
+export X_REF=$CASE_DIR/x_ref.bin
+export CMP_REL_TOL=1e-5
+export CMP_ABS_TOL=1e-3
+export TOP_K=10
+
+export PARTITION=local
 export APPTAINER_GPU=""
 
-sbatch \
-  --job-name=wgpu_case_3 \
-  --partition=local \
+mkdir -p "$OUT_DIR"
+
+PCG_JOB_ID=$(sbatch --parsable \
+  --job-name=root_case3_pcg \
+  --partition="$PARTITION" \
   --time=00:10:00 \
   --cpus-per-task=1 \
   --mem=2G \
-  --output=slurm-case3-%j.out \
-  --error=slurm-case3-%j.err \
+  --output="$OUT_DIR/slurm_logs/pcg-%j.out" \
+  --error="$OUT_DIR/slurm_logs/pcg-%j.err" \
   --export=ALL \
-  --wrap='
-mkdir -p "$OUT_DIR"
+  slurm/run_pcg_case.sbatch)
 
-apptainer exec $APPTAINER_GPU \
-  --bind "$ROOT_DIR:$ROOT_DIR" \
-  "$IMAGE" \
-  bash -lc "
-    set -euo pipefail
-    cd \"$ROOT_DIR\"
-    \"$BIN\" run-pcg-case \
-      --case-dir \"$CASE_DIR\" \
-      --max-iters \"$MAX_ITERS\" \
-      --rel-tol \"$REL_TOL\" \
-      --abs-tol \"$ABS_TOL\" \
-      --out-x \"$OUT_DIR/x.bin\" \
-      --out-metrics \"$OUT_DIR/metrics.json\"
-  "
-'
+echo "PCG job submitted: $PCG_JOB_ID"
 
-
-export ROOT_DIR=$HOME/wgpu_workspace
-export CASE_DIR=$ROOT_DIR/experiments/cases/test
-export OUT_DIR=$ROOT_DIR/experiments/runs/test
-export BIN=$ROOT_DIR/solvers/wgpu_solver_backend_cli
-export IMAGE=$ROOT_DIR/apptainer/solver-runtime.sif
-
-export BACKEND=auto
-export MAX_ITERS=2000
-export REL_TOL=1e-4
-export ABS_TOL=1e-7
-export APPTAINER_GPU=""
-
-sbatch \
-  --job-name=wgpu_case_test \
-  --partition=local \
-  --time=00:10:00 \
+CMP_JOB_ID=$(sbatch --parsable \
+  --dependency="afterok:$PCG_JOB_ID" \
+  --job-name=root_case3_cmp \
+  --partition="$PARTITION" \
+  --time=00:05:00 \
   --cpus-per-task=1 \
-  --mem=2G \
-  --output=slurm-case_test-%j.out \
-  --error=slurm-case_test-%j.err \
+  --mem=512M \
+  --output="$OUT_DIR/slurm_logs/cmp-%j.out" \
+  --error="$OUT_DIR/slurm_logs/cmp-%j.err" \
   --export=ALL \
-  --wrap='
-mkdir -p "$OUT_DIR"
+  slurm/compare_x.sbatch)
 
-apptainer exec $APPTAINER_GPU \
-  --bind "$ROOT_DIR:$ROOT_DIR" \
-  "$IMAGE" \
-  bash -lc "
-    set -euo pipefail
-    cd \"$ROOT_DIR\"
-    \"$BIN\" run-pcg-case \
-      --case-dir \"$CASE_DIR\" \
-      --max-iters \"$MAX_ITERS\" \
-      --rel-tol \"$REL_TOL\" \
-      --abs-tol \"$ABS_TOL\" \
-      --out-x \"$OUT_DIR/x.bin\" \
-      --out-metrics \"$OUT_DIR/metrics.json\"
-  "
-'
-
-
-
-
-bash scripts/31_export_usage_json_v2.sh \
-  --since "2026-01-07T00:00:00" \
-  --until "2026-01-08T00:00:00" \
-  --out usage_v2.json
+echo "CMP job submitted: $CMP_JOB_ID (afterok:$PCG_JOB_ID)"

@@ -88,6 +88,7 @@ sudo sed -i \
   -e '/^AccountingStorageType=/d' \
   -e '/^AccountingStorageHost=/d' \
   -e '/^AccountingStoragePort=/d' \
+  -e '/^AccountingStorageEnforce=/d' \
   -e '/^JobAcctGatherType=/d' \
   -e '/^ProctrackType=/d' \
   -e '/^TaskPlugin=/d' \
@@ -100,6 +101,7 @@ sudo tee -a "${SLURM_CONF}" >/dev/null <<EOF
 AccountingStorageType=accounting_storage/slurmdbd
 AccountingStorageHost=localhost
 AccountingStoragePort=${DBD_PORT}
+AccountingStorageEnforce=associations
 
 ProctrackType=proctrack/cgroup
 TaskPlugin=task/cgroup
