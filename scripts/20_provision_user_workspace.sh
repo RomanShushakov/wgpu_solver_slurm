@@ -10,6 +10,7 @@ WORKSPACE_DIR="${WORKSPACE_DIR:-${WORKSPACE_ROOT}/wgpu_workspace}"
 # Where to copy runtime assets from
 SRC_BIN="${SRC_BIN:-${REPO_ROOT}/solvers/wgpu_solver_backend_cli}"
 SRC_IMAGE="${SRC_IMAGE:-${REPO_ROOT}/apptainer/solver-runtime.sif}"
+SRC_TEST_CASE="${SRC_TEST_CASE:-${REPO_ROOT}/experiments/cases/test}"
 
 echo "=== Step 20: Provision per-user workspace (Option A: copy) ==="
 echo "REPO_ROOT=${REPO_ROOT}"
@@ -35,11 +36,26 @@ sudo -u "${USER_NAME}" mkdir -p \
   "${WORKSPACE_DIR}/experiments/runs" \
   "${WORKSPACE_DIR}/slurm/templates"
 
-echo "[2/6] Copy solver binary + sif..."
+echo "[2/6] Copy solver binary + sif + test case..."
+
 sudo install -m 0755 -o "${USER_NAME}" -g "${USER_NAME}" "${SRC_BIN}" \
   "${WORKSPACE_DIR}/solvers/wgpu_solver_backend_cli"
 sudo install -m 0644 -o "${USER_NAME}" -g "${USER_NAME}" "${SRC_IMAGE}" \
   "${WORKSPACE_DIR}/apptainer/solver-runtime.sif"
+
+# Copy test case directory tree
+command -v rsync >/dev/null 2>&1 || {
+  echo "ERROR: rsync not found. Install: sudo apt-get install -y rsync"
+  exit 1
+}
+
+[[ -d "${SRC_TEST_CASE}" ]] || { echo "ERROR: missing test case dir: ${SRC_TEST_CASE}"; exit 1; }
+
+DST_TEST_CASE="${WORKSPACE_DIR}/experiments/cases/test"
+sudo -u "${USER_NAME}" mkdir -p "${WORKSPACE_DIR}/experiments/cases"
+
+sudo rsync -a --delete "${SRC_TEST_CASE}/" "${DST_TEST_CASE}/"
+sudo chown -R "${USER_NAME}:${USER_NAME}" "${DST_TEST_CASE}"
 
 echo "[3/6] Copy slurm wrappers + templates..."
 sudo install -m 0755 -o "${USER_NAME}" -g "${USER_NAME}" "${REPO_ROOT}/slurm/common.sh" \
