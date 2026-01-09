@@ -23,8 +23,8 @@ mkdir -p "${RUN_LOG_DIR}"
 export IMAGE BIN CASE_DIR OUT_DIR BACKEND MAX_ITERS REL_TOL ABS_TOL APPTAINER_GPU
 export X_REF CMP_REL_TOL CMP_ABS_TOL TOP_K
 
-PCG="./slurm/templates/run_pcg_case.sbatch"
-CMP="./slurm/templates/compare_x.sbatch"
+PCG="./slurm/run_pcg_case.sbatch"
+CMP="./slurm/compare_x.sbatch"
 
 require_file "${PCG}"
 require_file "${CMP}"

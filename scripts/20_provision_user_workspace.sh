@@ -58,17 +58,17 @@ sudo rsync -a --delete "${SRC_TEST_CASE}/" "${DST_TEST_CASE}/"
 sudo chown -R "${USER_NAME}:${USER_NAME}" "${DST_TEST_CASE}"
 
 echo "[3/6] Copy slurm wrappers + templates..."
-sudo install -m 0755 -o "${USER_NAME}" -g "${USER_NAME}" "${REPO_ROOT}/slurm/common.sh" \
+sudo install -m 0755 -o "${USER_NAME}" -g "${USER_NAME}" "${REPO_ROOT}/slurm/user/common.sh" \
   "${WORKSPACE_DIR}/slurm/common.sh"
-sudo install -m 0755 -o "${USER_NAME}" -g "${USER_NAME}" "${REPO_ROOT}/slurm/submit_case.sh" \
+sudo install -m 0755 -o "${USER_NAME}" -g "${USER_NAME}" "${REPO_ROOT}/slurm/user/submit_case.sh" \
   "${WORKSPACE_DIR}/slurm/submit_case.sh"
-sudo install -m 0644 -o "${USER_NAME}" -g "${USER_NAME}" "${REPO_ROOT}/slurm/env.example.sh" \
+sudo install -m 0644 -o "${USER_NAME}" -g "${USER_NAME}" "${REPO_ROOT}/slurm/user/env.example.sh" \
   "${WORKSPACE_DIR}/slurm/env.example.sh"
 
-sudo install -m 0755 -o "${USER_NAME}" -g "${USER_NAME}" "${REPO_ROOT}/slurm/templates/run_pcg_case.sbatch" \
-  "${WORKSPACE_DIR}/slurm/templates/run_pcg_case.sbatch"
-sudo install -m 0755 -o "${USER_NAME}" -g "${USER_NAME}" "${REPO_ROOT}/slurm/templates/compare_x.sbatch" \
-  "${WORKSPACE_DIR}/slurm/templates/compare_x.sbatch"
+sudo install -m 0755 -o "${USER_NAME}" -g "${USER_NAME}" "${REPO_ROOT}/slurm/user/templates/run_pcg_case.sbatch" \
+  "${WORKSPACE_DIR}/slurm/run_pcg_case.sbatch"
+sudo install -m 0755 -o "${USER_NAME}" -g "${USER_NAME}" "${REPO_ROOT}/slurm/user/templates/compare_x.sbatch" \
+  "${WORKSPACE_DIR}/slurm/compare_x.sbatch"
 
 echo "[4/6] Create slurm/env.sh if missing..."
 if [[ ! -f "${WORKSPACE_DIR}/slurm/env.sh" ]]; then
