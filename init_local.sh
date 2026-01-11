@@ -46,7 +46,10 @@ chmod +x "${BIN}"
 # 1) Install packages
 echo "[1/6] Installing Slurm + Munge + deps..."
 sudo apt-get update
-sudo apt-get install -y munge slurm-wlm jq wget ca-certificates \
+sudo apt-get install -y \
+  munge \
+  slurmctld slurmd slurm-client \
+  jq wget ca-certificates \
   libvulkan1 mesa-vulkan-drivers vulkan-tools
 
 echo "[2/6] Ensuring Apptainer is available..."
@@ -72,7 +75,19 @@ apptainer version
 
 # 2) Enable munge
 echo "[3/6] Enabling munge..."
+sudo mkdir -p /etc/munge /run/munge /var/log/munge /var/lib/munge
+sudo chown -R munge:munge /etc/munge /run/munge /var/log/munge /var/lib/munge
+sudo chmod 0700 /etc/munge /run/munge /var/log/munge /var/lib/munge
+
+# Ensure key exists (create if missing)
+if [[ ! -f /etc/munge/munge.key ]]; then
+  sudo /usr/sbin/mungekey --create
+  sudo chown munge:munge /etc/munge/munge.key
+  sudo chmod 0400 /etc/munge/munge.key
+fi
+
 sudo systemctl enable --now munge
+sudo systemctl restart munge
 munge -n | unmunge >/dev/null
 
 # 3) Configure single-node Slurm
@@ -86,9 +101,9 @@ sudo mkdir -p /var/lib/slurm/slurmctld /var/lib/slurm/slurmd
 sudo chown -R slurm:slurm /var/lib/slurm
 
 # --- Slurm log + run dirs (required: services run as slurm user) ---
-sudo mkdir -p /var/log/slurm /run/slurm
+sudo mkdir -p /etc/slurm /var/log/slurm /run/slurm
 sudo chown slurm:slurm /var/log/slurm /run/slurm
-sudo chmod 755 /var/log/slurm /run/slurm
+sudo chmod 755 /etc/slurm /var/log/slurm /run/slurm
 
 sudo tee /etc/slurm/slurm.conf >/dev/null <<EOF
 ClusterName=local
