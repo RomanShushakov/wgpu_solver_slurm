@@ -49,13 +49,25 @@ sudo apt-get update
 sudo apt-get install -y munge slurm-wlm jq wget ca-certificates \
   libvulkan1 mesa-vulkan-drivers vulkan-tools
 
-echo "[2/6] Installing Apptainer ${APPTAINER_VERSION}..."
-cd /tmp
-DEB="apptainer_${APPTAINER_VERSION}_amd64.deb"
-if [[ ! -f "${DEB}" ]]; then
-  wget -q "https://github.com/apptainer/apptainer/releases/download/v${APPTAINER_VERSION}/${DEB}"
+echo "[2/6] Ensuring Apptainer is available..."
+ARCH="$(dpkg --print-architecture || true)"
+if command -v apptainer >/dev/null 2>&1; then
+  echo "Apptainer already installed: $(apptainer version)"
+else
+  if [[ "${ARCH}" == "arm64" || "${ARCH}" == "armhf" ]]; then
+    echo "ERROR: Apptainer not installed on ${ARCH}."
+    echo "Run: bash scripts/pi/00_install_go_apptainer.sh"
+    exit 1
+  fi
+
+  # x86_64/amd64 path (your old behavior)
+  cd /tmp
+  DEB="apptainer_${APPTAINER_VERSION}_amd64.deb"
+  if [[ ! -f "${DEB}" ]]; then
+    wget -q "https://github.com/apptainer/apptainer/releases/download/v${APPTAINER_VERSION}/${DEB}"
+  fi
+  sudo dpkg -i "${DEB}" || sudo apt-get -f install -y
 fi
-sudo dpkg -i "${DEB}" || sudo apt-get -f install -y
 apptainer version
 
 # 2) Enable munge

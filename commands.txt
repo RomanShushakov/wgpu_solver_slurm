@@ -1,3 +1,8 @@
+chmod +x scripts/pi/00_install_go_apptainer.sh
+APPTAINER_VERSION=1.4.5 bash scripts/pi/00_install_go_apptainer.sh
+
+
+
 ###############################################################################
 # 0) INIT / RESET
 ###############################################################################
