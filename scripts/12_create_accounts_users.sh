@@ -47,7 +47,13 @@ echo "[2/6] Create Slurm account (idempotent)..."
 sudo sacctmgr -i add account "${ACCOUNT_NAME}" Description="${ACCOUNT_DESC}" || true
 
 echo "[3/6] Create Slurm user association (idempotent)..."
-sudo sacctmgr -i add user name="${USER_NAME}" account="${ACCOUNT_NAME}" DefaultAccount="${ACCOUNT_NAME}" || true
+# Be explicit about cluster to avoid weird multi-cluster defaults
+sudo sacctmgr -i add user name="${USER_NAME}" account="${ACCOUNT_NAME}" DefaultAccount="${ACCOUNT_NAME}" cluster="${CLUSTER_NAME}" || true
+
+# IMPORTANT: make slurmctld pick up association changes promptly
+echo "[3.5/6] Reconfigure slurmctld to pick up new associations..."
+sudo scontrol reconfigure || true
+sleep 1
 
 echo "[4/6] Optionally create Linux user + workspace folders..."
 if [[ "${CREATE_LINUX_USER}" == "1" ]]; then
@@ -60,16 +66,13 @@ if [[ "${CREATE_LINUX_USER}" == "1" ]]; then
 
   echo "[4.1] Set Linux password (optional)..."
   if [[ -n "${USER_PASSWORD}" ]]; then
-    # Set password non-interactively
     echo "${USER_NAME}:${USER_PASSWORD}" | sudo chpasswd
-    # Ensure password auth is allowed (in case user was locked previously)
     sudo passwd -u "${USER_NAME}" >/dev/null 2>&1 || true
     echo "Password set for linux user '${USER_NAME}'."
   else
     echo "USER_PASSWORD not set; leaving password unchanged."
   fi
 
-  # Ensure home exists and is owned by the user (handles manual deletions)
   if [[ ! -d "${WORKSPACE_ROOT}" ]]; then
     echo "Home directory missing: ${WORKSPACE_ROOT}. Recreating..."
     sudo mkdir -p "${WORKSPACE_ROOT}"
@@ -77,14 +80,13 @@ if [[ "${CREATE_LINUX_USER}" == "1" ]]; then
   sudo chown "${USER_NAME}:${USER_NAME}" "${WORKSPACE_ROOT}"
   sudo chmod 750 "${WORKSPACE_ROOT}" || true
 
-  # Workspace skeleton (user-owned)
   sudo -u "${USER_NAME}" mkdir -p \
     "${WORKSPACE_DIR}/solvers" \
     "${WORKSPACE_DIR}/experiments" \
     "${WORKSPACE_DIR}/slurm" \
-    "${WORKSPACE_DIR}/apptainer"
+    "${WORKSPACE_DIR}/apptainer" \
+    "${WORKSPACE_DIR}/slurm_logs"
 
-  sudo chmod 750 "${WORKSPACE_ROOT}" || true
   echo "Workspace prepared at: ${WORKSPACE_DIR}"
 else
   echo "Skipping Linux user/workspace creation (CREATE_LINUX_USER=0)."
@@ -94,29 +96,47 @@ echo "[5/6] Submit a tiny billable job as ${USER_NAME}..."
 TEST_OUT="${WORKSPACE_DIR}/slurm_logs/slurm-acct-test-%j.out"
 TEST_ERR="${WORKSPACE_DIR}/slurm_logs/slurm-acct-test-%j.err"
 
-TEST_JOB_ID="$(
+submit_test_job() {
   sudo -u "${USER_NAME}" bash -lc "
     set -euo pipefail
     cd '${WORKSPACE_DIR}'
-    mkdir -p slurm_logs
     sbatch --parsable \
       --partition='${PARTITION}' \
+      --account='${ACCOUNT_NAME}' \
       --job-name='acct_test' \
       --chdir='${WORKSPACE_DIR}' \
       --output='${TEST_OUT}' \
       --error='${TEST_ERR}' \
       --wrap='echo hello_from_\$(whoami); sleep 2'
   "
-)"
-echo "Submitted test job: ${TEST_JOB_ID}"
+}
 
+# Try once; if we hit the association race, reconfigure + retry once.
+set +e
+TEST_JOB_ID="$(submit_test_job 2>"/tmp/step12_${USER_NAME}_sbatch.err")"
+rc=$?
+set -e
+
+if [[ $rc -ne 0 ]]; then
+  err="$(cat "/tmp/step12_${USER_NAME}_sbatch.err" || true)"
+  if echo "${err}" | grep -qi "Invalid account or account/partition combination"; then
+    echo "WARN: slurmctld hasn't picked up new associations yet; reconfigure + retry once..."
+    sudo scontrol reconfigure || true
+    sleep 2
+    TEST_JOB_ID="$(submit_test_job)"
+  else
+    echo "ERROR: sbatch failed:"
+    echo "${err}" >&2
+    exit $rc
+  fi
+fi
+
+echo "Submitted test job: ${TEST_JOB_ID}"
 
 echo "[6/6] Wait for job completion + accounting record, then show sacct..."
 
-# 6a) Wait until job leaves the queue (COMPLETED/FAILED/etc.)
 for _ in $(seq 1 "${SACCT_WAIT_SECONDS}"); do
   if ! squeue -h -j "${TEST_JOB_ID}" >/dev/null 2>&1; then
-    # some Slurm builds return nonzero if job unknown; treat as "left queue"
     break
   fi
   if [[ -z "$(squeue -h -j "${TEST_JOB_ID}" 2>/dev/null || true)" ]]; then
@@ -125,8 +145,6 @@ for _ in $(seq 1 "${SACCT_WAIT_SECONDS}"); do
   sleep 1
 done
 
-# 6b) Now wait until sacct returns a real record line (not just headers).
-# We request parseable output and check that the first field is non-empty and equals job id.
 found=0
 for _ in $(seq 1 "${SACCT_WAIT_SECONDS}"); do
   line="$(sacct -X -n -P -j "${TEST_JOB_ID}" -o JobIDRaw,State 2>/dev/null | head -n 1 || true)"
@@ -140,17 +158,12 @@ done
 
 if [[ "${found}" != "1" ]]; then
   echo "WARN: No sacct record for job ${TEST_JOB_ID} after ${SACCT_WAIT_SECONDS}s."
-  echo "Show job (if available):"
   scontrol show job "${TEST_JOB_ID}" 2>/dev/null || true
-  echo "Try manually:"
-  echo "  sacct -X -j ${TEST_JOB_ID} --duplicates"
-  echo
 else
-  sacct -X -j "${TEST_JOB_ID}" -o JobIDRaw,User,Account,State,Elapsed,AllocCPUS,AllocTRES%40 || true
+  sacct -X -j "${TEST_JOB_ID}" -o JobIDRaw,User,Account,Partition,State,Elapsed,AllocCPUS,AllocTRES%40 || true
   echo
 fi
 
-# 6c) If the job failed, show stderr/stdout to make debugging trivial.
 state="$(sacct -X -n -P -j "${TEST_JOB_ID}" -o State 2>/dev/null | head -n 1 | tr -d ' ' || true)"
 if [[ -n "${state}" && "${state}" != "COMPLETED" ]]; then
   echo "Job state: ${state}"

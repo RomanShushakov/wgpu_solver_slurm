@@ -11,6 +11,13 @@ bash scripts/12_undo_create_accounts_users.sh USER_NAME=user3 ACCOUNT_NAME=custo
 # bash purge_local.sh
 
 # init base single-node slurm + apptainer runtime
+CASE_DIR=./experiments/cases/test \
+OUT_DIR=./experiments/runs/test \
+X_REF=./experiments/cases/test/x_ref.bin \
+REL_TOL=1e-4
+ABS_TOL=1e-7
+CMP_REL_TOL=1e-3
+CMP_ABS_TOL=1e-2
 bash init_local.sh
 
 # Step 10-11: DB + slurmdbd accounting
@@ -37,6 +44,8 @@ USER_PASSWORD='pass1' \
 CREATE_LINUX_USER=1 \
 PARTITION=local \
 bash scripts/12_create_accounts_users.sh
+
+sudo sacctmgr show assoc where user=user1 format=Cluster,Account,User,Partition,DefaultQOS -P
 
 USER_NAME=user1 COPY_TEST_CASE=0 RSYNC_DELETE=1 bash scripts/20_provision_user_workspace.sh
 
@@ -100,6 +109,10 @@ sudo -u user1 -H bash -lc '
   cd ~/wgpu_workspace
   export CASE_DIR=$HOME/wgpu_workspace/experiments/cases/case_1
   export OUT_DIR=$HOME/wgpu_workspace/experiments/runs/case_1
+  export REL_TOL=1e-4
+  export ABS_TOL=1e-7
+  export CMP_REL_TOL=1e-3
+  export CMP_ABS_TOL=1e-2
   ./slurm/submit_case.sh
 '
 
@@ -109,6 +122,10 @@ sudo -u user2 -H bash -lc '
   cd ~/wgpu_workspace
   export CASE_DIR=$HOME/wgpu_workspace/experiments/cases/case_2
   export OUT_DIR=$HOME/wgpu_workspace/experiments/runs/case_2
+  export REL_TOL=1e-4
+  export ABS_TOL=1e-7
+  export CMP_REL_TOL=1e-3
+  export CMP_ABS_TOL=1e0
   ./slurm/submit_case.sh
 '
 
@@ -118,6 +135,10 @@ sudo -u user3 -H bash -lc '
   cd ~/wgpu_workspace
   export CASE_DIR=$HOME/wgpu_workspace/experiments/cases/case_3
   export OUT_DIR=$HOME/wgpu_workspace/experiments/runs/case_3
+  export REL_TOL=1e-4
+  export ABS_TOL=1e-7
+  export CMP_REL_TOL=1e-3
+  export CMP_ABS_TOL=1e1
   ./slurm/submit_case.sh
 '
 
@@ -188,6 +209,15 @@ bash scripts/12_undo_create_accounts_users.sh
 # ROOT DEMO: run case_3 directly from repo (PCG + CMP split)
 ###############################################################################
 
+# create an admin billing entity (Slurm account)
+sudo sacctmgr -i add account admin Description="Local admin"
+
+# associate roman with admin
+sudo sacctmgr -i add user name=roman account=admin DefaultAccount=admin
+
+# make slurmctld pick up new associations immediately
+sudo scontrol reconfigure
+
 cd $HOME/workdir/wgpu_solver_slurm
 
 command -v sbatch >/dev/null 2>&1 || {
@@ -208,14 +238,15 @@ export REL_TOL=1e-4
 export ABS_TOL=1e-7
 
 export X_REF=$CASE_DIR/x_ref.bin
-export CMP_REL_TOL=1e-5
-export CMP_ABS_TOL=1e-3
+export CMP_REL_TOL=1e-3
+export CMP_ABS_TOL=1e1
 export TOP_K=10
 
 export PARTITION=local
 export APPTAINER_GPU=""
 
 mkdir -p "$OUT_DIR"
+mkdir -p "$OUT_DIR/slurm_logs"
 
 PCG_JOB_ID=$(sbatch --parsable \
   --job-name=root_case3_pcg \

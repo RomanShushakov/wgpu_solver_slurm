@@ -114,18 +114,27 @@ EOF
 echo "[8/9] Restart slurmctld/slurmd..."
 sudo systemctl restart slurmctld slurmd
 
-echo "[9/9] Register or update cluster '${CLUSTER_NAME}' in accounting..."
-HN="$(hostname -s)"
+echo "[9/9] Ensure cluster '${CLUSTER_NAME}' exists in accounting..."
 
-if sudo sacctmgr show cluster -n -P format=Cluster | cut -d'|' -f1 | grep -qx "${CLUSTER_NAME}"; then
-  echo "Cluster exists — updating ControlHost/ControlPort."
-  sudo sacctmgr -i modify cluster where Cluster="${CLUSTER_NAME}" \
-    set ControlHost="${HN}" ControlPort=6817
+# Read current clusters (just names)
+if sudo sacctmgr -n -P show cluster format=Cluster | cut -d'|' -f1 | grep -qx "${CLUSTER_NAME}"; then
+  echo "Cluster '${CLUSTER_NAME}' already registered."
 else
-  echo "Registering new cluster."
-  sudo sacctmgr -i add cluster "${CLUSTER_NAME}"
-  sudo sacctmgr -i modify cluster where Cluster="${CLUSTER_NAME}" \
-    set ControlHost="${HN}" ControlPort=6817
+  echo "Registering new cluster '${CLUSTER_NAME}'..."
+  if ! sudo sacctmgr -i add cluster "${CLUSTER_NAME}"; then
+    echo "ERROR: could not add cluster '${CLUSTER_NAME}'."
+    echo "slurmdbd status/log tail:"
+    sudo systemctl status slurmdbd --no-pager | head -n 80 || true
+    sudo tail -n 200 /var/log/slurm/slurmdbd.log || true
+    exit 1
+  fi
+fi
+
+# Optional: show what Slurmctld thinks the cluster name is (informational)
+CTL_CLUSTER="$(scontrol show config 2>/dev/null | awk -F= '/^ClusterName/ {gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2; exit}' || true)"
+if [[ -n "${CTL_CLUSTER}" && "${CTL_CLUSTER}" != "${CLUSTER_NAME}" ]]; then
+  echo "WARN: slurm.conf ClusterName='${CTL_CLUSTER}' but accounting cluster='${CLUSTER_NAME}'."
+  echo "      Usually these should match."
 fi
 
 echo
