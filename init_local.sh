@@ -28,9 +28,15 @@ CMP_ABS_TOL="${CMP_ABS_TOL:-1e-7}"
 TOP_K="${TOP_K:-10}"
 
 # ---- Slurm params ----
-PARTITION="${PARTITION:-local}"
+PARTITION="${PARTITION:-gpu}"
 
-echo "=== init_local ==="
+# ---- GPU params ----
+# If you want NVML autodetect, set GRES_AUTODETECT=1
+GRES_AUTODETECT="${GRES_AUTODETECT:-0}"
+# Force Apptainer to use NVIDIA support (recommended on Vultr GPU)
+APPTAINER_GPU="${APPTAINER_GPU:-"--nv"}"
+
+echo "=== init_local (vultr) ==="
 echo "REPO_ROOT=${REPO_ROOT}"
 echo "BIN=${BIN}"
 echo "CASE_DIR=${CASE_DIR}"
@@ -38,18 +44,25 @@ echo "OUT_DIR=${OUT_DIR}"
 echo "X_REF=${X_REF}"
 echo "APPTAINER_VERSION=${APPTAINER_VERSION}"
 echo "PARTITION=${PARTITION}"
-echo "=================="
+echo "GRES_AUTODETECT=${GRES_AUTODETECT}"
+echo "APPTAINER_GPU=${APPTAINER_GPU}"
+echo "=========================="
 
-mkdir -p "${REPO_ROOT}/apptainer" "${REPO_ROOT}/slurm" "${OUT_DIR}"
-chmod +x "${BIN}"
+mkdir -p "${REPO_ROOT}/apptainer" "${REPO_ROOT}/slurm" "${OUT_DIR}" "${REPO_ROOT}/slurm_logs"
+chmod +x "${BIN}" || true
 
+###############################################################################
 # 1) Install packages
-echo "[1/6] Installing Slurm + Munge + deps..."
+###############################################################################
+echo "[1/7] Installing Slurm + Munge + deps..."
 sudo apt-get update
-sudo apt-get install -y munge slurm-wlm jq wget ca-certificates \
+sudo apt-get install -y munge slurm-wlm slurm-client jq wget ca-certificates \
   libvulkan1 mesa-vulkan-drivers vulkan-tools
 
-echo "[2/6] Installing Apptainer ${APPTAINER_VERSION}..."
+###############################################################################
+# 2) Install Apptainer
+###############################################################################
+echo "[2/7] Installing Apptainer ${APPTAINER_VERSION}..."
 cd /tmp
 DEB="apptainer_${APPTAINER_VERSION}_amd64.deb"
 if [[ ! -f "${DEB}" ]]; then
@@ -58,26 +71,45 @@ fi
 sudo dpkg -i "${DEB}" || sudo apt-get -f install -y
 apptainer version
 
-# 2) Enable munge
-echo "[3/6] Enabling munge..."
+###############################################################################
+# 3) Enable munge
+###############################################################################
+echo "[3/7] Enabling munge..."
 sudo systemctl enable --now munge
 munge -n | unmunge >/dev/null
 
-# 3) Configure single-node Slurm
-echo "[4/6] Configuring single-node Slurm..."
+###############################################################################
+# 4) Configure single-node Slurm (GPU)
+###############################################################################
+echo "[4/7] Configuring single-node Slurm..."
 HN="$(hostname -s)"
 MEM_MB="$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo)"
-REALMEM="$(( MEM_MB > 1024 ? MEM_MB - 512 : MEM_MB ))"
-CPUS=1
+# Keep a small reserve so Slurm doesn't overcommit
+REALMEM="$(( MEM_MB > 2048 ? MEM_MB - 1024 : MEM_MB ))"
+CPUS="$(nproc --all)"
 
 sudo mkdir -p /var/lib/slurm/slurmctld /var/lib/slurm/slurmd
 sudo chown -R slurm:slurm /var/lib/slurm
 
-# --- Slurm log + run dirs (required: services run as slurm user) ---
+# Logs + run dir
 sudo mkdir -p /var/log/slurm /run/slurm
 sudo chown slurm:slurm /var/log/slurm /run/slurm
 sudo chmod 755 /var/log/slurm /run/slurm
 
+# cgroup config (helps device isolation; also required for clean accounting later)
+sudo tee /etc/slurm/cgroup.conf >/dev/null <<'EOF'
+CgroupAutomount=yes
+ConstrainCores=yes
+ConstrainRAMSpace=yes
+ConstrainDevices=yes
+EOF
+
+# gres config
+sudo tee /etc/slurm/gres.conf >/dev/null <<EOF
+$( [[ "${GRES_AUTODETECT}" == "1" ]] && echo "AutoDetect=nvml" || echo "Name=gpu File=/dev/nvidia0" )
+EOF
+
+# IMPORTANT: use real hostname for NodeName and partition
 sudo tee /etc/slurm/slurm.conf >/dev/null <<EOF
 ClusterName=local
 SlurmctldHost=${HN}
@@ -95,19 +127,20 @@ SlurmdPort=6818
 SchedulerType=sched/backfill
 SelectType=select/cons_tres
 SelectTypeParameters=CR_Core
+
 ProctrackType=proctrack/cgroup
+TaskPlugin=task/cgroup
+JobAcctGatherType=jobacct_gather/cgroup
 
 SlurmctldLogFile=/var/log/slurm/slurmctld.log
 SlurmdLogFile=/var/log/slurm/slurmd.log
 
-# local dev baseline:
-# - accounting disabled (Step 11 enables slurmdbd accounting)
-# - keep MpiDefault=none to avoid pmix noise
+# accounting disabled here; enable via slurmdbd scripts later
 AccountingStorageType=accounting_storage/none
-JobAcctGatherType=jobacct_gather/none
-MpiDefault=none
 
-NodeName=${HN} CPUs=${CPUS} RealMemory=${REALMEM} State=UNKNOWN
+GresTypes=gpu
+
+NodeName=${HN} CPUs=${CPUS} RealMemory=${REALMEM} State=UNKNOWN Gres=gpu:1
 PartitionName=${PARTITION} Nodes=${HN} Default=YES MaxTime=INFINITE State=UP
 EOF
 
@@ -115,10 +148,17 @@ sudo systemctl enable --now slurmctld slurmd
 sudo systemctl restart munge
 sudo systemctl restart slurmctld slurmd
 
-sinfo
+echo "Slurm sanity:"
+sinfo -N -l
+scontrol show node "${HN}" | egrep -i 'NodeName|State|Gres|CfgTRES|Partitions' || true
 
-# 4) Build Apptainer runtime
-echo "[5/6] Building Apptainer runtime SIF..."
+echo "GPU sanity:"
+nvidia-smi -L || true
+
+###############################################################################
+# 5) Build Apptainer runtime
+###############################################################################
+echo "[5/7] Building Apptainer runtime SIF..."
 cat > "${DEF}" <<'EOF'
 Bootstrap: docker
 From: debian:bookworm-slim
@@ -144,8 +184,10 @@ EOF
 
 sudo apptainer build "${IMAGE}" "${DEF}"
 
-# 5) Ensure job scripts exist (minimal, stable versions)
-echo "[6/6] Writing sbatch scripts + submitting jobs..."
+###############################################################################
+# 6) Write sbatch scripts (GPU-aware)
+###############################################################################
+echo "[6/7] Writing sbatch scripts..."
 
 cat > "${REPO_ROOT}/slurm/run_pcg_case.sbatch" <<'EOF'
 #!/bin/bash
@@ -155,6 +197,7 @@ cat > "${REPO_ROOT}/slurm/run_pcg_case.sbatch" <<'EOF'
 #SBATCH --time=01:00:00
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=2G
+#SBATCH --gres=gpu:1
 #SBATCH --chdir=.
 
 set -euo pipefail
@@ -169,11 +212,11 @@ cd "${ROOT_DIR}"
 : "${MAX_ITERS:=2000}"
 : "${REL_TOL:=1e-4}"
 : "${ABS_TOL:=1e-7}"
-: "${APPTAINER_GPU:=}"
+: "${APPTAINER_GPU:=--nv}"
 
+mkdir -p slurm_logs "${OUT_DIR}"
 OUT_X="${OUT_DIR}/x.bin"
 OUT_METRICS="${OUT_DIR}/metrics.json"
-mkdir -p "${OUT_DIR}"
 
 apptainer exec ${APPTAINER_GPU} --bind "${ROOT_DIR}:${ROOT_DIR}" "${IMAGE}" bash -lc "
   set -euo pipefail
@@ -197,6 +240,7 @@ cat > "${REPO_ROOT}/slurm/compare_x.sbatch" <<'EOF'
 #SBATCH --time=00:10:00
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=512M
+#SBATCH --gres=gpu:1
 #SBATCH --chdir=.
 
 set -euo pipefail
@@ -210,8 +254,9 @@ cd "${ROOT_DIR}"
 : "${CMP_REL_TOL:=1e-5}"
 : "${CMP_ABS_TOL:=1e-3}"
 : "${TOP_K:=10}"
-: "${APPTAINER_GPU:=}"
+: "${APPTAINER_GPU:=--nv}"
 
+mkdir -p slurm_logs
 X="${OUT_DIR}/x.bin"
 
 apptainer exec ${APPTAINER_GPU} --bind "${ROOT_DIR}:${ROOT_DIR}" "${IMAGE}" bash -lc "
@@ -227,19 +272,23 @@ apptainer exec ${APPTAINER_GPU} --bind "${ROOT_DIR}:${ROOT_DIR}" "${IMAGE}" bash
 EOF
 chmod +x "${REPO_ROOT}/slurm/compare_x.sbatch"
 
-# Submit jobs
+###############################################################################
+# 7) Submit demo jobs
+###############################################################################
+echo "[7/7] Submitting jobs..."
 cd "${REPO_ROOT}"
+
 export IMAGE BIN CASE_DIR OUT_DIR BACKEND MAX_ITERS REL_TOL ABS_TOL
 export X_REF CMP_REL_TOL CMP_ABS_TOL TOP_K
-export APPTAINER_GPU="${APPTAINER_GPU:-}"
+export APPTAINER_GPU
 
-JOB1="$(sbatch --parsable slurm/run_pcg_case.sbatch)"
+JOB1="$(sbatch --parsable --partition="${PARTITION}" slurm/run_pcg_case.sbatch)"
 echo "PCG job: ${JOB1}"
 
-JOB2="$(sbatch --parsable --dependency=afterok:${JOB1} slurm/compare_x.sbatch)"
+JOB2="$(sbatch --parsable --partition="${PARTITION}" --dependency=afterok:${JOB1} slurm/compare_x.sbatch)"
 echo "COMPARE job: ${JOB2} (afterok:${JOB1})"
 
 echo
 echo "Track: squeue"
-echo "Logs: slurm-pcg-${JOB1}.out  slurm-cmp-${JOB2}.out"
+echo "Logs: slurm_logs/slurm-pcg-${JOB1}.out  slurm_logs/slurm-cmp-${JOB2}.out"
 echo "Outputs: ${OUT_DIR}/x.bin  ${OUT_DIR}/metrics.json"

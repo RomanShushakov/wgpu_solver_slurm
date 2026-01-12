@@ -16,12 +16,12 @@ PURGE_DOCKER="${PURGE_DOCKER:-0}"
 PURGE_DOCKER_VOLUME="${PURGE_DOCKER_VOLUME:-0}"
 PURGE_USERS="${PURGE_USERS:-0}"
 
-echo "=== purge_local ==="
+echo "=== purge_local (vultr) ==="
 echo "REPO_ROOT=${REPO_ROOT}"
 echo "PURGE_DOCKER=${PURGE_DOCKER}"
 echo "PURGE_DOCKER_VOLUME=${PURGE_DOCKER_VOLUME}"
 echo "PURGE_USERS=${PURGE_USERS}"
-echo "==================="
+echo "==========================="
 
 echo "[1/9] Stop services (ignore failures)..."
 sudo systemctl stop slurmctld slurmd slurmdbd munge 2>/dev/null || true
@@ -43,7 +43,6 @@ if [[ "${PURGE_DOCKER}" == "1" ]]; then
         docker compose -f "${COMPOSE_FILE}" down || true
       fi
     fi
-    # extra safety if compose file moved/renamed
     docker rm -f slurm-mariadb 2>/dev/null || true
   else
     echo "  (docker not installed; skipping)"
@@ -52,12 +51,12 @@ else
   echo "[3/9] Docker purge disabled (skipping MariaDB container cleanup)"
 fi
 
-echo "[4/9] Purge packages..."
+echo "[4/9] Purge packages (Slurm/Munge/Apptainer/DB tools only)..."
 sudo apt-get purge -y \
   slurm-wlm slurmctld slurmd slurm-client slurmdbd \
   munge libmunge2 \
   apptainer \
-  mariadb-client \
+  mariadb-client mariadb-server \
   || true
 
 echo "[5/9] Remove configs/state/logs..."
@@ -81,7 +80,7 @@ done
 
 if [[ "${PURGE_USERS}" == "1" ]]; then
   echo "[7/9] Remove demo Linux users (best-effort)..."
-  for u in user1; do
+  for u in user1 user2 user3; do
     if id "${u}" >/dev/null 2>&1; then
       sudo userdel -r "${u}" 2>/dev/null || sudo userdel "${u}" 2>/dev/null || true
     fi
@@ -100,3 +99,5 @@ echo "  dpkg -l | grep -E 'slurm|munge|apptainer|singularity' || true"
 if [[ "${PURGE_DOCKER}" == "1" ]]; then
   echo "  docker ps -a | grep -E 'slurm-mariadb' || true"
 fi
+echo "GPU driver should still be present:"
+echo "  nvidia-smi || true"
