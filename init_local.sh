@@ -175,10 +175,11 @@ TaskPlugin=task/cgroup
 # GRES
 GresTypes=gpu
 
-# Accounting via slurmdbd
-AccountingStorageType=accounting_storage/slurmdbd
-AccountingStorageHost=localhost
+# Accounting gather (db is configured later deterministically)
 JobAcctGatherType=jobacct_gather/cgroup
+
+# Disable MPI plugin noise (you’re not using MPI)
+MpiDefault=none
 
 # Node definition
 NodeName=${HOST_SHORT} CPUs=${CPU_TOTAL} RealMemory=${MEM_MB} Gres=gpu:1 State=UNKNOWN
@@ -206,14 +207,16 @@ sudo chown -R slurm:slurm /var/log/slurm /var/spool/slurmctld /var/spool/slurmd 
 sudo chmod 0755 /var/log/slurm /var/spool/slurmctld /var/spool/slurmd /run/slurm
 
 log "4) Ensure slurm.conf uses accounting_storage/slurmdbd"
-# Remove any previous AccountingStorageType/Host lines and re-add deterministic values
-sudo sed -i '/^AccountingStorageType=/d;/^AccountingStorageHost=/d' /etc/slurm/slurm.conf
+# Remove any previous lines (idempotent)
+sudo sed -i \
+  '/^AccountingStorageType=/d;/^AccountingStorageHost=/d' \
+  /etc/slurm/slurm.conf
 
-sudo tee -a /etc/slurm/slurm.conf >/dev/null <<EOF
+sudo tee -a /etc/slurm/slurm.conf >/dev/null <<'EOF'
 
-# --- Accounting via slurmdbd ---
+# --- Accounting via slurmdbd (force IPv4 loopback, avoid ::1/localhost surprises) ---
 AccountingStorageType=accounting_storage/slurmdbd
-AccountingStorageHost=localhost
+AccountingStorageHost=127.0.0.1
 EOF
 
 log "5) Restart slurmctld/slurmd and verify controller is up"
@@ -227,13 +230,23 @@ if ! scontrol ping >/dev/null 2>&1; then
   exit 1
 fi
 
-log "6) Initialize accounting objects (cluster/account/user)"
-# These are idempotent-ish: cluster add may print "already exists".
-sudo sacctmgr -i add cluster "${CLUSTER_NAME}" || true
-sudo sacctmgr -i add account "${DEFAULT_ACCOUNT}" Description="Admin" || true
-sudo sacctmgr -i add user name="${DEFAULT_USER}" account="${DEFAULT_ACCOUNT}" DefaultAccount="${DEFAULT_ACCOUNT}" || true
+log "6) Initialize accounting objects (cluster/account/user) (quiet idempotent)"
+# cluster
+if ! sacctmgr -n show cluster "${CLUSTER_NAME}" format=Cluster 2>/dev/null | grep -qx "${CLUSTER_NAME}"; then
+  sudo sacctmgr -i add cluster "${CLUSTER_NAME}"
+fi
 
-# Make sure controller reloads assoc/qos state
+# account
+if ! sacctmgr -n show account "${DEFAULT_ACCOUNT}" format=Account 2>/dev/null | grep -qx "${DEFAULT_ACCOUNT}"; then
+  sudo sacctmgr -i add account "${DEFAULT_ACCOUNT}" Description="Admin"
+fi
+
+# user association (check assoc)
+if ! sacctmgr -n show assoc user="${DEFAULT_USER}" account="${DEFAULT_ACCOUNT}" format=User,Account 2>/dev/null \
+      | awk '{print $1,$2}' | grep -qx "${DEFAULT_USER} ${DEFAULT_ACCOUNT}"; then
+  sudo sacctmgr -i add user name="${DEFAULT_USER}" account="${DEFAULT_ACCOUNT}" DefaultAccount="${DEFAULT_ACCOUNT}"
+fi
+
 sudo scontrol reconfigure || true
 
 log "7) Quick checks"
