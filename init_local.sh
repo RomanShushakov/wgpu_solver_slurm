@@ -47,12 +47,39 @@ sudo apt-get install -y \
   munge \
   slurm-wlm slurmctld slurmd slurm-client \
   slurmdbd slurm-wlm-mysql-plugin \
-  netcat-openbsd
+  netcat-openbsd \
+  jq wget ca-certificates rsync \
+  libvulkan1 mesa-vulkan-drivers vulkan-tools
 
 require_cmd systemctl
 require_cmd nc
 require_cmd sacctmgr
 require_cmd scontrol
+
+log "Install Apptainer (if missing)"
+APPTAINER_VERSION="${APPTAINER_VERSION:-1.4.5}"
+
+if ! command -v apptainer >/dev/null 2>&1; then
+  tmpdir="$(mktemp -d)"
+  (
+    set -euo pipefail
+    cd "${tmpdir}"
+    DEB="apptainer_${APPTAINER_VERSION}_amd64.deb"
+    wget -q "https://github.com/apptainer/apptainer/releases/download/v${APPTAINER_VERSION}/${DEB}"
+    sudo dpkg -i "${DEB}" || sudo apt-get -f install -y
+  )
+  rm -rf "${tmpdir}"
+fi
+
+apptainer version || { echo "ERROR: apptainer install failed"; exit 1; }
+
+log "Optional: build SIF if missing"
+IMAGE="${IMAGE:-${REPO_ROOT}/apptainer/solver-runtime.sif}"
+DEF="${DEF:-${REPO_ROOT}/apptainer/solver-runtime.def}"
+
+if [[ ! -f "${IMAGE}" && -f "${DEF}" ]]; then
+  sudo apptainer build "${IMAGE}" "${DEF}"
+fi
 
 log "init_local"
 echo "REPO_ROOT=${REPO_ROOT}"
@@ -233,6 +260,12 @@ log "3.8) Ensure state/log dirs exist with correct ownership"
 sudo mkdir -p /var/log/slurm /var/spool/slurmctld /var/spool/slurmd /var/lib/slurm /run/slurm
 sudo chown -R slurm:slurm /var/log/slurm /var/spool/slurmctld /var/spool/slurmd /var/lib/slurm /run/slurm
 sudo chmod 0755 /var/log/slurm /var/spool/slurmctld /var/spool/slurmd /run/slurm
+
+log "3.85) Ensure GPU metrics dir exists and is writable by job users"
+sudo mkdir -p /var/log/slurm/gpu-metrics
+# Jobs run as normal users; make this directory world-writable but sticky (safe-ish)
+sudo chown root:slurm /var/log/slurm/gpu-metrics || true
+sudo chmod 1777 /var/log/slurm/gpu-metrics
 
 log "4) Start slurmctld/slurmd (slurmdbd must be reachable first)"
 # Guard: slurmctld will die if it can’t reach slurmdbd and you later enable AccountingStorageTRES.

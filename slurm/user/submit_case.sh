@@ -29,7 +29,9 @@ CMP="./slurm/compare_x.sbatch"
 require_file "${PCG}"
 require_file "${CMP}"
 
-JOB1="$(sbatch --parsable --partition="${PARTITION}" \
+JOB1="$(sbatch --parsable \
+  --partition="${PARTITION}" \
+  --gres=gpu:1 \
   --time="${SBATCH_TIME}" --mem="${SBATCH_MEM}" --cpus-per-task="${SBATCH_CPUS}" \
   --chdir="${ROOT_DIR}" \
   --output="${RUN_LOG_DIR}/pcg-%j.out" \
@@ -37,7 +39,9 @@ JOB1="$(sbatch --parsable --partition="${PARTITION}" \
   "${PCG}")"
 log "PCG job: ${JOB1}"
 
-JOB2="$(sbatch --parsable --dependency=afterok:${JOB1} --partition="${PARTITION}" \
+JOB2="$(sbatch --parsable \
+  --dependency=afterok:${JOB1} \
+  --partition="${PARTITION}" \
   --time="00:05:00" --mem="512M" --cpus-per-task="1" \
   --chdir="${ROOT_DIR}" \
   --output="${RUN_LOG_DIR}/cmp-%j.out" \

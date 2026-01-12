@@ -8,6 +8,10 @@
 #SBATCH --chdir=.
 
 set -euo pipefail
+
+export PATH=/usr/local/bin:/usr/bin:/bin:$PATH
+command -v apptainer >/dev/null 2>&1 || { echo "ERROR: apptainer not in PATH"; exit 127; }
+
 ROOT_DIR="${SLURM_SUBMIT_DIR:-$(pwd)}"
 cd "${ROOT_DIR}"
 
