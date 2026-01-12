@@ -23,19 +23,37 @@ DEFAULT_USER="${DEFAULT_USER:-root}"
 
 log() { echo -e "\n=== $* ==="; }
 
-require_cmd() {
-  command -v "$1" >/dev/null 2>&1 || { echo "ERROR: missing command: $1"; exit 1; }
-}
+require_cmd() { command -v "$1" >/dev/null 2>&1 || { echo "ERROR: missing command: $1"; exit 1; }; }
 
 wait_tcp4() {
   local host="$1" port="$2" tries="${3:-30}" sleep_s="${4:-1}"
   for _ in $(seq 1 "$tries"); do
-    if nc -4 -vz "$host" "$port" >/dev/null 2>&1; then
-      return 0
-    fi
+    if nc -4 -vz "$host" "$port" >/dev/null 2>&1; then return 0; fi
     sleep "$sleep_s"
   done
   return 1
+}
+
+restart_slurmdbd_or_die() {
+  log "Restart slurmdbd + verify it REALLY listens (IPv4 ${SLURMDBD_ADDR}:${SLURMDBD_PORT})"
+  sudo systemctl daemon-reload
+  sudo systemctl restart slurmdbd
+
+  if wait_tcp4 "${SLURMDBD_ADDR}" "${SLURMDBD_PORT}" 30 1; then
+    echo "OK: slurmdbd is reachable on ${SLURMDBD_ADDR}:${SLURMDBD_PORT}"
+    return 0
+  fi
+
+  echo "ERROR: slurmdbd is not reachable on ${SLURMDBD_ADDR}:${SLURMDBD_PORT}"
+  echo "--- systemctl status slurmdbd ---"
+  sudo systemctl status slurmdbd --no-pager || true
+  echo "--- ss listeners ---"
+  sudo ss -lntp | egrep ":${SLURMDBD_PORT}\b|slurmdbd" || true
+  echo "--- journal (last 160 lines) ---"
+  sudo journalctl -u slurmdbd -n 160 --no-pager || true
+  echo "--- slurmdbd log (tail) ---"
+  sudo tail -n 120 /var/log/slurm/slurmdbd.log 2>/dev/null || true
+  exit 1
 }
 
 HOST_SHORT="$(hostname -s)"
@@ -53,7 +71,6 @@ require_cmd systemctl
 require_cmd nc
 require_cmd sacctmgr
 require_cmd scontrol
-require_cmd ss
 
 log "init_local"
 echo "REPO_ROOT=${REPO_ROOT}"
@@ -61,25 +78,31 @@ echo "HOST_SHORT=${HOST_SHORT}"
 echo "HOST_FQDN=${HOST_FQDN}"
 echo "CLUSTER_NAME=${CLUSTER_NAME}"
 
-log "0) Make /run/slurm persistent + writable (tmpfiles)"
-sudo tee /etc/tmpfiles.d/slurm.conf >/dev/null <<'EOF'
-d /run/slurm 0755 slurm slurm -
-EOF
-sudo systemd-tmpfiles --create
+log "0) Ensure /var/log/slurm exists"
+sudo mkdir -p /var/log/slurm
+sudo chown -R slurm:slurm /var/log/slurm
 
-# Ensure dirs exist right now
-sudo mkdir -p /run/slurm /var/log/slurm
-sudo chown slurm:slurm /run/slurm /var/log/slurm
-sudo chmod 0755 /run/slurm
-
-log "0.5) Ensure systemd creates RuntimeDirectory for slurmdbd"
+log "0.5) Install systemd drop-in so /run/slurm is ALWAYS correct for slurmdbd"
 sudo mkdir -p /etc/systemd/system/slurmdbd.service.d
 sudo tee /etc/systemd/system/slurmdbd.service.d/override.conf >/dev/null <<'EOF'
 [Service]
+# Make systemd create /run/slurm on every start, owned by the service user
 RuntimeDirectory=slurm
 RuntimeDirectoryMode=0755
+
+# Belt-and-suspenders: enforce perms every restart (handles weird drifts)
+ExecStartPre=/usr/bin/install -d -m 0755 -o slurm -g slurm /run/slurm
+
+# If slurmdbd briefly fails, restart it
+Restart=on-failure
+RestartSec=1
 EOF
-sudo systemctl daemon-reload
+
+# Also keep tmpfiles rule so /run/slurm exists at boot even before systemd starts slurmdbd
+sudo tee /etc/tmpfiles.d/slurm.conf >/dev/null <<EOF
+d /run/slurm 0755 slurm slurm -
+EOF
+sudo systemd-tmpfiles --create
 
 log "1) Ensure MariaDB container is up (optional)"
 if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
@@ -93,9 +116,10 @@ sudo mkdir -p /etc/slurm
 sudo tee /etc/slurm/slurmdbd.conf >/dev/null <<EOF
 AuthType=auth/munge
 
-# MUST match hostname -s
+# MUST match hostname -s on this node:
 DbdHost=${HOST_SHORT}
-# Listen only on loopback
+
+# Bind/listen only on loopback
 DbdAddr=${SLURMDBD_ADDR}
 DbdPort=${SLURMDBD_PORT}
 
@@ -114,31 +138,18 @@ EOF
 sudo chown slurm:slurm /etc/slurm/slurmdbd.conf
 sudo chmod 0600 /etc/slurm/slurmdbd.conf
 
-log "3) Start munge + slurmdbd and verify it REALLY listens"
+log "3) Start munge + slurmdbd"
 sudo systemctl enable --now munge
 sudo systemctl restart munge
 
 sudo systemctl enable --now slurmdbd
-sudo systemctl restart slurmdbd
-
-# wait for TCP accept on IPv4 loopback
-if ! wait_tcp4 "${SLURMDBD_ADDR}" "${SLURMDBD_PORT}" 40 1; then
-  echo "ERROR: slurmdbd is not accepting TCP on ${SLURMDBD_ADDR}:${SLURMDBD_PORT}"
-  echo "--- slurmdbd status ---"
-  sudo systemctl status slurmdbd --no-pager || true
-  echo "--- slurmdbd journal ---"
-  sudo journalctl -u slurmdbd -n 120 --no-pager || true
-  echo "--- ss listeners ---"
-  sudo ss -lntp | egrep ":${SLURMDBD_PORT}\b|slurmdbd" || true
-  exit 1
-fi
+restart_slurmdbd_or_die
 
 log "3.5) Stop slurmctld/slurmd before writing slurm.conf"
 sudo systemctl stop slurmctld slurmd 2>/dev/null || true
 
 log "3.6) Ensure /etc/slurm/slurm.conf exists (create if missing)"
 sudo mkdir -p /etc/slurm
-
 if [[ ! -f /etc/slurm/slurm.conf ]]; then
   CPU_TOTAL="$(nproc || echo 2)"
   MEM_MB="$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo 2>/dev/null || echo 7000)"
@@ -149,52 +160,50 @@ if [[ ! -f /etc/slurm/slurm.conf ]]; then
 #
 ClusterName=${CLUSTER_NAME}
 SlurmctldHost=${HOST_SHORT}
-
 SlurmUser=slurm
 SlurmdUser=root
 
 AuthType=auth/munge
 CryptoType=crypto/munge
 
-# Ports
 SlurmctldPort=6817
 SlurmdPort=6818
 
-# Mail - avoid "Configured MailProg is invalid"
-MailProg=/bin/true
-
-# State / logs
 StateSaveLocation=/var/spool/slurmctld
 SlurmdSpoolDir=/var/spool/slurmd
 SlurmctldLogFile=/var/log/slurm/slurmctld.log
 SlurmdLogFile=/var/log/slurm/slurmd.log
 
-# Scheduling / selection
 SchedulerType=sched/backfill
 SelectType=select/cons_tres
 SelectTypeParameters=CR_Core_Memory
 
-# Cgroups (good baseline)
 ProctrackType=proctrack/cgroup
 TaskPlugin=task/cgroup
 
-# GRES
 GresTypes=gpu
 
-# Accounting gather (db configured below deterministically)
+# Accounting via slurmdbd
+AccountingStorageType=accounting_storage/slurmdbd
+AccountingStorageHost=127.0.0.1
 JobAcctGatherType=jobacct_gather/cgroup
 
 # Disable MPI plugin noise
 MpiDefault=none
 
-# Node definition
 NodeName=${HOST_SHORT} CPUs=${CPU_TOTAL} RealMemory=${MEM_MB} Gres=gpu:1 State=UNKNOWN
-
-# Partition
 PartitionName=gpu Nodes=${HOST_SHORT} Default=YES MaxTime=INFINITE State=UP
 EOF
-
   sudo chmod 0644 /etc/slurm/slurm.conf
+else
+  # Force deterministic accounting host/type each run (idempotent)
+  sudo sed -i '/^AccountingStorageType=/d;/^AccountingStorageHost=/d' /etc/slurm/slurm.conf
+  sudo tee -a /etc/slurm/slurm.conf >/dev/null <<'EOF'
+
+# --- Accounting via slurmdbd (force IPv4 loopback) ---
+AccountingStorageType=accounting_storage/slurmdbd
+AccountingStorageHost=127.0.0.1
+EOF
 fi
 
 log "3.7) Ensure /etc/slurm/gres.conf exists"
@@ -206,69 +215,35 @@ EOF
 fi
 
 log "3.8) Ensure state/log dirs exist with correct ownership"
-sudo mkdir -p /var/log/slurm /var/spool/slurmctld /var/spool/slurmd /var/lib/slurm /run/slurm
-sudo chown -R slurm:slurm /var/log/slurm /var/spool/slurmctld /var/spool/slurmd /var/lib/slurm /run/slurm
-sudo chmod 0755 /var/log/slurm /var/spool/slurmctld /var/spool/slurmd /run/slurm
+sudo mkdir -p /var/log/slurm /var/spool/slurmctld /var/spool/slurmd /var/lib/slurm
+sudo chown -R slurm:slurm /var/log/slurm /var/spool/slurmctld /var/spool/slurmd /var/lib/slurm
+sudo chmod 0755 /var/log/slurm /var/spool/slurmctld /var/spool/slurmd
 
-log "4) Force accounting_storage/slurmdbd config (NO AccountingStorageTRES here)"
-# Remove old lines to keep idempotent + avoid duplicates
-sudo sed -i \
-  '/^AccountingStorageType=/d;/^AccountingStorageHost=/d;/^AccountingStorageTRES=/d' \
-  /etc/slurm/slurm.conf
-
-sudo tee -a /etc/slurm/slurm.conf >/dev/null <<'EOF'
-
-# --- Accounting via slurmdbd (force IPv4 loopback) ---
-AccountingStorageType=accounting_storage/slurmdbd
-AccountingStorageHost=127.0.0.1
-EOF
-
-log "5) Start slurmctld/slurmd (slurmdbd must be reachable first)"
-# Ensure slurmdbd still accepts before starting controller
-if ! wait_tcp4 "127.0.0.1" "${SLURMDBD_PORT}" 10 1; then
-  echo "ERROR: slurmdbd stopped listening unexpectedly before starting slurmctld"
-  sudo systemctl status slurmdbd --no-pager || true
-  exit 1
-fi
-
+log "4) Start slurmctld/slurmd (only after slurmdbd is reachable)"
+wait_tcp4 "${SLURMDBD_ADDR}" "${SLURMDBD_PORT}" 10 1 || { echo "ERROR: slurmdbd not reachable before starting controller"; exit 1; }
 sudo systemctl restart slurmctld
 sudo systemctl restart slurmd
+scontrol ping >/dev/null 2>&1 || { echo "ERROR: slurmctld not reachable"; sudo systemctl status slurmctld --no-pager || true; exit 1; }
 
-if ! scontrol ping >/dev/null 2>&1; then
-  echo "ERROR: slurmctld not reachable after restart"
-  sudo systemctl status slurmctld --no-pager || true
-  sudo journalctl -u slurmctld -n 120 --no-pager || true
-  exit 1
-fi
-
-log "6) Initialize accounting objects (quiet idempotent)"
-# cluster
+log "5) Initialize accounting objects (quiet idempotent)"
 if ! sacctmgr -n show cluster "${CLUSTER_NAME}" format=Cluster 2>/dev/null | grep -qx "${CLUSTER_NAME}"; then
   sudo sacctmgr -i add cluster "${CLUSTER_NAME}"
 fi
-
-# account
 if ! sacctmgr -n show account "${DEFAULT_ACCOUNT}" format=Account 2>/dev/null | grep -qx "${DEFAULT_ACCOUNT}"; then
   sudo sacctmgr -i add account "${DEFAULT_ACCOUNT}" Description="Admin"
 fi
-
-# user association (check assoc)
 if ! sacctmgr -n show assoc user="${DEFAULT_USER}" account="${DEFAULT_ACCOUNT}" format=User,Account 2>/dev/null \
       | awk '{print $1,$2}' | grep -qx "${DEFAULT_USER} ${DEFAULT_ACCOUNT}"; then
   sudo sacctmgr -i add user name="${DEFAULT_USER}" account="${DEFAULT_ACCOUNT}" DefaultAccount="${DEFAULT_ACCOUNT}"
 fi
-
 sudo scontrol reconfigure || true
 
-log "7) Quick checks"
-echo "scontrol ping:"
+log "6) Quick checks"
 scontrol ping || true
 echo
-echo "Accounting config:"
-scontrol show config | egrep -i 'AccountingStorageType|AccountingStorageHost|AccountingStorageTRES|JobAcctGatherType|SelectType|MailProg' || true
-echo
-echo "slurmdbd listening:"
 sudo ss -lntp | egrep ":${SLURMDBD_PORT}\b|slurmdbd" || true
+echo
+scontrol show config | egrep -i 'AccountingStorageType|AccountingStorageHost|JobAcctGatherType|SelectType|MpiDefault' || true
 
 log "DONE"
-echo "Baseline is stable. Next: run ./enable_gpu_tres.sh to add AccountingStorageTRES safely."
+echo "Next: run ./enable_gpu_tres.sh to add gres/gpu into AccountingStorageTRES safely."
