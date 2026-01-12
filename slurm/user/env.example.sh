@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Required
-export PARTITION="${PARTITION:-local}"
+export PARTITION="${PARTITION:-gpu}"
 
 export ROOT_DIR="${ROOT_DIR:-$HOME/wgpu_workspace}"
 export CASE_DIR="${CASE_DIR:-$ROOT_DIR/experiments/cases/test}"

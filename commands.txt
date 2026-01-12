@@ -48,7 +48,7 @@ CLUSTER_NAME=local \
 ACCOUNT_NAME=customer1 \
 ACCOUNT_DESC="Customer 1" \
 USER_NAME=user1 \
-USER_PASSWORD='pass1' \
+USER_PASSWORD='5]1Z(Vn76&Uj' \
 CREATE_LINUX_USER=1 \
 PARTITION=gpu \
 bash scripts/12_create_accounts_users.sh
@@ -63,7 +63,7 @@ CLUSTER_NAME=local \
 ACCOUNT_NAME=customer2 \
 ACCOUNT_DESC="Customer 2" \
 USER_NAME=user2 \
-USER_PASSWORD='pass2' \
+USER_PASSWORD='~bz11[Y#j03' \
 CREATE_LINUX_USER=1 \
 PARTITION=gpu \
 bash scripts/12_create_accounts_users.sh
@@ -76,7 +76,7 @@ CLUSTER_NAME=local \
 ACCOUNT_NAME=customer2 \
 ACCOUNT_DESC="Customer 2" \
 USER_NAME=user3 \
-USER_PASSWORD='pass3' \
+USER_PASSWORD='1£2NI1cA&£@k' \
 CREATE_LINUX_USER=1 \
 PARTITION=gpu \
 bash scripts/12_create_accounts_users.sh
