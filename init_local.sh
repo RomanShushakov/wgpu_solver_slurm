@@ -24,6 +24,16 @@ DEFAULT_USER="${DEFAULT_USER:-root}"
 # ---- Helpers ----
 log() { echo -e "\n=== $* ==="; }
 
+log "Install required packages (slurm + munge + accounting)"
+sudo apt-get update -y
+
+# Base slurm + munge + accounting
+sudo apt-get install -y \
+  munge \
+  slurm-wlm slurmctld slurmd slurm-client \
+  slurmdbd slurm-wlm-mysql-plugin \
+  netcat-openbsd
+
 require_cmd() {
   command -v "$1" >/dev/null 2>&1 || { echo "ERROR: missing command: $1"; exit 1; }
 }
