@@ -1,3 +1,4 @@
+# scripts/33_report_usage.sh  (UPDATED: new columns)
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -14,14 +15,18 @@ command -v jq >/dev/null 2>&1 || { echo "jq is required"; exit 1; }
 
 # CSV (user-level)
 jq -r '
-["user","jobs","elapsed_seconds","cpu_seconds","billing_seconds","gpu_seconds"],
+["user","jobs","elapsed_seconds","cpu_seconds","billing_seconds","gpu_seconds","gpu_util_end_avg","gpu_util_end_max","gpu_mem_used_end_avg","gpu_mem_used_end_max"],
 (.by_user[] | [
   .user,
   (.jobs|tostring),
   (.elapsed_seconds|tostring),
   (.cpu_seconds|tostring),
   (.billing_seconds|tostring),
-  (.gpu_seconds|tostring)
+  (.gpu_seconds|tostring),
+  ((.gpu_util_end_avg // "")|tostring),
+  ((.gpu_util_end_max // "")|tostring),
+  ((.gpu_mem_used_end_avg // "")|tostring),
+  ((.gpu_mem_used_end_max // "")|tostring)
 ])
 | @csv
 ' "${IN}" > "${OUT_CSV}"
@@ -37,9 +42,9 @@ jq -r '
   echo
   echo "## By user"
   echo
-  echo "| user | jobs | elapsed_s | cpu_s | billing_s | gpu_s |"
-  echo "|---|---:|---:|---:|---:|---:|"
-  jq -r '.by_user[] | "| \(.user) | \(.jobs) | \(.elapsed_seconds) | \(.cpu_seconds) | \(.billing_seconds) | \(.gpu_seconds) |"' "${IN}"
+  echo "| user | jobs | elapsed_s | cpu_s | billing_s | gpu_s | util_end_avg | util_end_max | mem_end_avg | mem_end_max |"
+  echo "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|"
+  jq -r '.by_user[] | "| \(.user) | \(.jobs) | \(.elapsed_seconds) | \(.cpu_seconds) | \(.billing_seconds) | \(.gpu_seconds) | \(.gpu_util_end_avg // "") | \(.gpu_util_end_max // "") | \(.gpu_mem_used_end_avg // "") | \(.gpu_mem_used_end_max // "") |"' "${IN}"
   echo
   echo "CSV: ${OUT_CSV}"
 } > "${OUT_MD}"

@@ -2,7 +2,7 @@
 # 0) INIT / RESET
 ###############################################################################
 
-# (optional) full reset
+# (optional) full reset (remove old demo users/accounts/workspaces)
 bash scripts/12_undo_create_accounts_users.sh USER_NAME=user1 ACCOUNT_NAME=customer1 DELETE_WORKSPACE=1 DELETE_ACCOUNT=1 DELETE_LINUX_USER=1 DELETE_HOME=1 || true
 bash scripts/12_undo_create_accounts_users.sh USER_NAME=user2 ACCOUNT_NAME=customer2 DELETE_WORKSPACE=1 DELETE_ACCOUNT=1 DELETE_LINUX_USER=1 DELETE_HOME=1 || true
 bash scripts/12_undo_create_accounts_users.sh USER_NAME=user3 ACCOUNT_NAME=customer2 DELETE_WORKSPACE=1 DELETE_ACCOUNT=0 DELETE_LINUX_USER=1 DELETE_HOME=1 || true
@@ -11,13 +11,14 @@ bash scripts/12_undo_create_accounts_users.sh USER_NAME=user3 ACCOUNT_NAME=custo
 # bash purge_local.sh
 
 # init base single-node slurm + apptainer runtime
+# (these env vars are used by your submit wrappers/templates; harmless during init)
 CASE_DIR=./experiments/cases/test \
 OUT_DIR=./experiments/runs/test \
 X_REF=./experiments/cases/test/x_ref.bin \
-REL_TOL=1e-4
-ABS_TOL=1e-7
-CMP_REL_TOL=1e-3
-CMP_ABS_TOL=1e-2
+REL_TOL=1e-4 \
+ABS_TOL=1e-7 \
+CMP_REL_TOL=1e-3 \
+CMP_ABS_TOL=1e-2 \
 bash init_local.sh
 
 # Step 10-11: DB + slurmdbd accounting
@@ -25,8 +26,12 @@ export DB_ROOT_PASS="rootpass_change_me"
 bash scripts/10_enable_accounting_mariadb_docker.sh
 bash scripts/11_configure_slurmdbd.sh
 
-# (recommended for demo) enforce that jobs must have valid associations
-# (do once; after that restart)
+# Step 13: Option A (simple, robust): nvidia-smi snapshots at job start/end
+bash scripts/13_install_gpu_wrap.sh
+
+# (optional / recommended for demo) enforce that jobs must have valid associations
+# ACCOUNTING_ENFORCE_ASSOC=1 bash scripts/11_configure_slurmdbd.sh
+# (or)
 # echo "AccountingStorageEnforce=associations" | sudo tee -a /etc/slurm/slurm.conf
 # sudo systemctl restart slurmctld slurmd
 
@@ -34,6 +39,9 @@ bash scripts/11_configure_slurmdbd.sh
 ###############################################################################
 # 1) CREATE USERS + PROVISION WORKSPACES
 ###############################################################################
+# IMPORTANT:
+# - your Vultr partition is "gpu" (not "local")
+# - Step 12 test job now requests --gres=gpu:1 + runs nvidia-smi in the wrapper
 
 # user1 under customer1 with password pass1
 CLUSTER_NAME=local \
@@ -42,7 +50,7 @@ ACCOUNT_DESC="Customer 1" \
 USER_NAME=user1 \
 USER_PASSWORD='pass1' \
 CREATE_LINUX_USER=1 \
-PARTITION=local \
+PARTITION=gpu \
 bash scripts/12_create_accounts_users.sh
 
 sudo sacctmgr show assoc where user=user1 format=Cluster,Account,User,Partition,DefaultQOS -P
@@ -57,7 +65,7 @@ ACCOUNT_DESC="Customer 2" \
 USER_NAME=user2 \
 USER_PASSWORD='pass2' \
 CREATE_LINUX_USER=1 \
-PARTITION=local \
+PARTITION=gpu \
 bash scripts/12_create_accounts_users.sh
 
 USER_NAME=user2 COPY_TEST_CASE=0 RSYNC_DELETE=1 bash scripts/20_provision_user_workspace.sh
@@ -70,7 +78,7 @@ ACCOUNT_DESC="Customer 2" \
 USER_NAME=user3 \
 USER_PASSWORD='pass3' \
 CREATE_LINUX_USER=1 \
-PARTITION=local \
+PARTITION=gpu \
 bash scripts/12_create_accounts_users.sh
 
 USER_NAME=user3 COPY_TEST_CASE=0 RSYNC_DELETE=1 bash scripts/20_provision_user_workspace.sh
@@ -102,6 +110,9 @@ sudo chown -R user3:user3 /home/user3/wgpu_workspace/experiments/cases/case_3
 # NOTE:
 # - submit_case.sh uses env.sh for CASE_DIR/OUT_DIR etc.
 # - easiest demo: export CASE_DIR/OUT_DIR on the fly before calling submit_case.sh
+# - IMPORTANT: your sbatch templates should now run solver via:
+#       gpu_wrap <your command>
+#   so that /var/log/slurm/gpu-metrics/job-<id>-{start,end}.csv gets created.
 
 # user1 runs case_1
 sudo -u user1 -H bash -lc '
@@ -146,11 +157,20 @@ sudo -u user3 -H bash -lc '
 squeue
 # Example: check accounting for latest jobs (replace JOBIDS)
 # sacct -X -j <JOB1>,<JOB2> -o JobIDRaw,User,Account,Partition,State,Elapsed,AllocCPUS,AllocTRES%60
+# Option A GPU snapshots:
+# sudo ls -l /var/log/slurm/gpu-metrics | tail
+# sudo head -n 5 /var/log/slurm/gpu-metrics/job-<JOBID>-start.csv
+# sudo head -n 5 /var/log/slurm/gpu-metrics/job-<JOBID>-end.csv
 
 
 ###############################################################################
 # 4) USAGE EXPORT + SUMMARY + REPORT (Steps 31/32/33)
 ###############################################################################
+# NOTE:
+# - Step 31 now also tries to attach gpu_util/mem/power/temp from the snapshot CSVs.
+# - Run as root to read /var/log/slurm/gpu-metrics safely.
+
+sudo mkdir -p usage
 
 # collect (all users)
 sudo bash scripts/31_export_usage_json_v2.sh --all-users \
@@ -160,7 +180,7 @@ sudo bash scripts/31_export_usage_json_v2.sh --all-users \
 # summarize
 bash scripts/32_summarize_usage.sh usage/usage_v2.json usage/usage_summary.json
 
-# report (prints from usage_summary.json by default in your script)
+# report
 bash scripts/33_report_usage.sh usage/usage_summary.json usage/usage_report.md usage/usage_report.csv
 
 
@@ -208,6 +228,10 @@ bash scripts/12_undo_create_accounts_users.sh
 ###############################################################################
 # ROOT DEMO: run case_3 directly from repo (PCG + CMP split)
 ###############################################################################
+# NOTE:
+# - you probably want PARTITION=gpu
+# - wrap commands inside sbatch scripts with gpu_wrap (preferred),
+#   or run nvidia-smi inline in the scripts if you’re experimenting.
 
 # create an admin billing entity (Slurm account)
 sudo sacctmgr -i add account admin Description="Local admin"
@@ -242,7 +266,7 @@ export CMP_REL_TOL=1e-3
 export CMP_ABS_TOL=1e1
 export TOP_K=10
 
-export PARTITION=local
+export PARTITION=gpu
 export APPTAINER_GPU=""
 
 mkdir -p "$OUT_DIR"
@@ -251,6 +275,7 @@ mkdir -p "$OUT_DIR/slurm_logs"
 PCG_JOB_ID=$(sbatch --parsable \
   --job-name=root_case3_pcg \
   --partition="$PARTITION" \
+  --gres=gpu:1 \
   --time=00:10:00 \
   --cpus-per-task=1 \
   --mem=2G \
@@ -265,6 +290,7 @@ CMP_JOB_ID=$(sbatch --parsable \
   --dependency="afterok:$PCG_JOB_ID" \
   --job-name=root_case3_cmp \
   --partition="$PARTITION" \
+  --gres=gpu:1 \
   --time=00:05:00 \
   --cpus-per-task=1 \
   --mem=512M \

@@ -1,13 +1,14 @@
+# scripts/31_export_usage_json_v2.sh  (UPDATED: attaches Option-A GPU snapshots if present)
 #!/usr/bin/env bash
 set -euo pipefail
 
 usage() {
   cat <<'EOF'
 Usage:
-  bash scripts/31_export_usage_json_v2.sh --since "<time>" [--until "<time>"] [--user <u>] [--account <a>] [--out <file>]
+  bash scripts/31_export_usage_json_v2.sh --since "<time>" [--until "<time>"] [--user <u>] [--account <a>] [--out <file>] [--all-users]
 
 Examples:
-  bash scripts/31_export_usage_json_v2.sh --since "2026-01-07T00:00:00" --until "2026-01-08T00:00:00" --out usage.json
+  sudo bash scripts/31_export_usage_json_v2.sh --all-users --since "now-24hours" --out usage/usage_v2.json
   bash scripts/31_export_usage_json_v2.sh --since "2026-01-01" --user user1 --out user1.json
 EOF
 }
@@ -19,7 +20,8 @@ SINCE=""
 UNTIL=""
 OUT="usage_v2.json"
 
-# parse args (add --all-users)
+GPU_LOG_DIR="${GPU_LOG_DIR:-/var/log/slurm/gpu-metrics}"
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --since) SINCE="$2"; shift 2;;
@@ -28,19 +30,20 @@ while [[ $# -gt 0 ]]; do
     --user) FILTER_USER="$2"; shift 2;;
     --account) FILTER_ACCOUNT="$2"; shift 2;;
     --all-users) ALL_USERS=1; shift;;
-    *)
-      echo "Unknown arg: $1" >&2
-      exit 2
-      ;;
+    -h|--help) usage; exit 0;;
+    *) echo "Unknown arg: $1" >&2; usage; exit 2;;
   esac
 done
+
+command -v jq >/dev/null 2>&1 || { echo "jq is required"; exit 1; }
+command -v sacct >/dev/null 2>&1 || { echo "sacct is required"; exit 1; }
 
 # auto-enable all-users if root and no explicit --user
 if [[ "${EUID}" -eq 0 && -z "${FILTER_USER}" ]]; then
   ALL_USERS=1
 fi
 
-sacct_flags=(-n -P -X)   # parseable, no headers, no steps
+sacct_flags=(-n -P -X)
 if [[ "${ALL_USERS}" -eq 1 ]]; then
   sacct_flags+=(-a)
 fi
@@ -54,16 +57,58 @@ where_flags=()
 [[ -n "${FILTER_ACCOUNT}" ]] && where_flags+=(-A "${FILTER_ACCOUNT}")
 
 FIELDS="JobIDRaw,User,Account,Partition,State,ElapsedRaw,AllocCPUS,ReqTRES,AllocTRES,Submit,Start,End,JobName"
-
 RAW="$(sacct "${sacct_flags[@]}" "${time_flags[@]}" "${where_flags[@]}" -o "${FIELDS}")"
+
+# Read first GPU row from start/end CSV snapshot, return selected columns:
+# util_gpu, mem_used, power, temp
+read_gpu_snapshot() {
+  local file="$1"
+  if [[ ! -f "${file}" ]]; then
+    echo "|||"
+    return 0
+  fi
+  # Expected header:
+  # ts,host,job_id,job_user,index,uuid,name,utilization.gpu,utilization.memory,memory.used,memory.total,power.draw,temperature.gpu
+  # Data row: we take NR==2 (first gpu)
+  awk -F',' 'NR==2{
+    gsub(/^ +| +$/, "", $8);  # utilization.gpu
+    gsub(/^ +| +$/, "", $10); # memory.used
+    gsub(/^ +| +$/, "", $12); # power.draw
+    gsub(/^ +| +$/, "", $13); # temperature.gpu
+    print $8 "|" $10 "|" $12 "|" $13;
+    exit
+  }' "${file}" 2>/dev/null || echo "|||"
+}
+
+# Augment each sacct line with:
+# gpu_util_start|gpu_mem_used_start|gpu_power_start|gpu_temp_start|gpu_util_end|gpu_mem_used_end|gpu_power_end|gpu_temp_end
+AUGMENTED="$(mktemp)"
+trap 'rm -f "${AUGMENTED}"' EXIT
+
+while IFS= read -r line; do
+  [[ -z "${line}" ]] && continue
+  jobid="$(echo "${line}" | cut -d'|' -f1)"
+
+  sfile="${GPU_LOG_DIR}/job-${jobid}-start.csv"
+  efile="${GPU_LOG_DIR}/job-${jobid}-end.csv"
+
+  start_vals="$(read_gpu_snapshot "${sfile}")"
+  end_vals="$(read_gpu_snapshot "${efile}")"
+
+  echo "${line}|${start_vals}|${end_vals}" >> "${AUGMENTED}"
+done <<< "${RAW}"
 
 jq -Rn \
   --arg since "${SINCE}" \
   --arg until "${UNTIL}" \
   --arg user "${FILTER_USER}" \
-  --arg account "${FILTER_ACCOUNT}" '
+  --arg account "${FILTER_ACCOUNT}" \
+  --arg gpu_log_dir "${GPU_LOG_DIR}" '
   def to_int:
     if . == null or . == "" then 0 else (try (.|tonumber) catch 0) end;
+
+  def to_num_or_null:
+    if . == null or . == "" then null else (try (.|tonumber) catch null) end;
 
   def tres_int($key):
     ( . // "" )
@@ -81,7 +126,23 @@ jq -Rn \
         state:       ($f[4] // ""),
         elapsed_sec: (($f[5] // "") | to_int),
         alloc_cpus:  (($f[6] // "") | to_int),
-        alloc_tres:  ($f[7] // "")
+        req_tres:    ($f[7] // ""),
+        alloc_tres:  ($f[8] // ""),
+        submit:      ($f[9] // ""),
+        start:       ($f[10] // ""),
+        end:         ($f[11] // ""),
+        job_name:    ($f[12] // ""),
+
+        # Option-A snapshots (first GPU row), may be null if no logs
+        gpu_util_start:       (($f[13] // "") | to_num_or_null),
+        gpu_mem_used_start:   (($f[14] // "") | to_num_or_null),
+        gpu_power_start:      (($f[15] // "") | to_num_or_null),
+        gpu_temp_start:       (($f[16] // "") | to_num_or_null),
+
+        gpu_util_end:         (($f[17] // "") | to_num_or_null),
+        gpu_mem_used_end:     (($f[18] // "") | to_num_or_null),
+        gpu_power_end:        (($f[19] // "") | to_num_or_null),
+        gpu_temp_end:         (($f[20] // "") | to_num_or_null)
       }
     | .billing = (.alloc_tres | tres_int("billing") | if . == 0 then (.alloc_cpus) else . end)
     | .gpu_count = (.alloc_tres | tres_int("gres/gpu"))
@@ -97,10 +158,11 @@ jq -Rn \
         filter_account: ($account | if . == "" then null else . end),
         generated_at: (now | todateiso8601),
         source: "sacct",
-        schema: "usage.v2"
+        schema: "usage.v2",
+        gpu_log_dir: $gpu_log_dir
       },
       jobs: $jobs
-    }' <<< "${RAW}" > "${OUT}"
+    }' < "${AUGMENTED}" > "${OUT}"
 
 echo "OK: wrote ${OUT}"
 jq '.meta, {jobs: (.jobs|length)}' "${OUT}"
