@@ -52,12 +52,22 @@ else
 fi
 
 echo "[4/9] Purge packages (Slurm/Munge/Apptainer/DB tools only)..."
+# Purge what exists; do NOT fail if a package name isn't known in apt repos.
 sudo apt-get purge -y \
   slurm-wlm slurmctld slurmd slurm-client slurmdbd \
   munge libmunge2 \
-  apptainer \
   mariadb-client mariadb-server \
   || true
+
+# Apptainer may have been installed from a .deb and might not be in apt indexes.
+if dpkg -s apptainer >/dev/null 2>&1; then
+  sudo dpkg -P apptainer || true
+fi
+
+# Some older setups might still use singularity
+if dpkg -s singularity-container >/dev/null 2>&1; then
+  sudo dpkg -P singularity-container || true
+fi
 
 echo "[5/9] Remove configs/state/logs..."
 sudo rm -rf \
