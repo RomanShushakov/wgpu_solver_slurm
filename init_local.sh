@@ -1,294 +1,164 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Run from repo root:  bash init_local.sh
-REPO_ROOT="$(cd "${REPO_ROOT:-.}" && pwd)"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# ---- Versions ----
-APPTAINER_VERSION="${APPTAINER_VERSION:-1.4.5}"
+# ---- Config knobs ----
+CLUSTER_NAME="${CLUSTER_NAME:-local}"
 
-# ---- Paths in repo ----
-BIN="${BIN:-${REPO_ROOT}/solvers/wgpu_solver_backend_cli}"
-IMAGE="${IMAGE:-${REPO_ROOT}/apptainer/solver-runtime.sif}"
-DEF="${DEF:-${REPO_ROOT}/apptainer/solver-runtime.def}"
+# slurmdbd listens locally only
+SLURMDBD_PORT="${SLURMDBD_PORT:-6819}"
+SLURMDBD_ADDR="${SLURMDBD_ADDR:-127.0.0.1}"
 
-CASE_DIR="${CASE_DIR:-${REPO_ROOT}/experiments/cases/test}"
-OUT_DIR="${OUT_DIR:-${REPO_ROOT}/experiments/runs/test}"
-X_REF="${X_REF:-${REPO_ROOT}/experiments/cases/test/x_ref.bin}"
+# MariaDB in Docker (published to 127.0.0.1:3306 on host)
+DB_HOST="${DB_HOST:-127.0.0.1}"
+DB_PORT="${DB_PORT:-3306}"
+DB_NAME="${DB_NAME:-slurm_acct_db}"
+DB_USER="${DB_USER:-slurm}"
+DB_PASS="${DB_PASS:-slurmpass_change_me}"
 
-# ---- Solver params ----
-BACKEND="${BACKEND:-auto}"
-MAX_ITERS="${MAX_ITERS:-2000}"
-REL_TOL="${REL_TOL:-1e-4}"
-ABS_TOL="${ABS_TOL:-1e-7}"
+# Default account/user for “local demo”
+DEFAULT_ACCOUNT="${DEFAULT_ACCOUNT:-admin}"
+DEFAULT_USER="${DEFAULT_USER:-root}"
 
-# ---- Compare params ----
-CMP_REL_TOL="${CMP_REL_TOL:-1e-4}"
-CMP_ABS_TOL="${CMP_ABS_TOL:-1e-7}"
-TOP_K="${TOP_K:-10}"
+# ---- Helpers ----
+log() { echo -e "\n=== $* ==="; }
 
-# ---- Slurm params ----
-PARTITION="${PARTITION:-gpu}"
+require_cmd() {
+  command -v "$1" >/dev/null 2>&1 || { echo "ERROR: missing command: $1"; exit 1; }
+}
 
-# ---- GPU params ----
-# If you want NVML autodetect, set GRES_AUTODETECT=1
-GRES_AUTODETECT="${GRES_AUTODETECT:-0}"
-# Force Apptainer to use NVIDIA support (recommended on Vultr GPU)
-APPTAINER_GPU="${APPTAINER_GPU:-"--nv"}"
+wait_tcp() {
+  local host="$1" port="$2" tries="${3:-30}" sleep_s="${4:-1}"
+  for _ in $(seq 1 "$tries"); do
+    if nc -vz "$host" "$port" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep "$sleep_s"
+  done
+  return 1
+}
 
-echo "=== init_local (vultr) ==="
+HOST_SHORT="$(hostname -s)"
+HOST_FQDN="$(hostname -f || true)"
+
+log "init_local"
 echo "REPO_ROOT=${REPO_ROOT}"
-echo "BIN=${BIN}"
-echo "CASE_DIR=${CASE_DIR}"
-echo "OUT_DIR=${OUT_DIR}"
-echo "X_REF=${X_REF}"
-echo "APPTAINER_VERSION=${APPTAINER_VERSION}"
-echo "PARTITION=${PARTITION}"
-echo "GRES_AUTODETECT=${GRES_AUTODETECT}"
-echo "APPTAINER_GPU=${APPTAINER_GPU}"
-echo "=========================="
+echo "HOST_SHORT=${HOST_SHORT}"
+echo "HOST_FQDN=${HOST_FQDN}"
+echo "CLUSTER_NAME=${CLUSTER_NAME}"
 
-mkdir -p "${REPO_ROOT}/apptainer" "${REPO_ROOT}/slurm" "${OUT_DIR}" "${REPO_ROOT}/slurm_logs"
-chmod +x "${BIN}" || true
+require_cmd systemctl
+require_cmd nc
+require_cmd sacctmgr
+require_cmd scontrol
 
-###############################################################################
-# 1) Install packages
-###############################################################################
-echo "[1/7] Installing Slurm + Munge + deps..."
-sudo apt-get update
-sudo apt-get install -y munge slurm-wlm slurm-client jq wget ca-certificates \
-  libvulkan1 mesa-vulkan-drivers vulkan-tools
+log "0) Make /run/slurm persistent + writable (tmpfiles)"
+# /run is tmpfs -> recreate on boot
+sudo tee /etc/tmpfiles.d/slurm.conf >/dev/null <<EOF
+d /run/slurm 0755 slurm slurm -
+EOF
+sudo systemd-tmpfiles --create
 
-###############################################################################
-# 2) Install Apptainer
-###############################################################################
-echo "[2/7] Installing Apptainer ${APPTAINER_VERSION}..."
-cd /tmp
-DEB="apptainer_${APPTAINER_VERSION}_amd64.deb"
-if [[ ! -f "${DEB}" ]]; then
-  wget -q "https://github.com/apptainer/apptainer/releases/download/v${APPTAINER_VERSION}/${DEB}"
+# Ensure dirs exist and ownership is correct now
+sudo mkdir -p /run/slurm /var/log/slurm
+sudo chown slurm:slurm /run/slurm /var/log/slurm
+sudo chmod 0755 /run/slurm
+
+log "1) Ensure MariaDB container is up (if you rely on docker-compose)"
+# If you manage DB elsewhere, you can comment this block.
+if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+  if [[ -f "${REPO_ROOT}/admin/docker-compose.mariadb.yml" ]]; then
+    docker compose -f "${REPO_ROOT}/admin/docker-compose.mariadb.yml" up -d
+  fi
 fi
-sudo dpkg -i "${DEB}" || sudo apt-get -f install -y
-apptainer version
 
-###############################################################################
-# 3) Enable munge
-###############################################################################
-echo "[3/7] Enabling munge..."
-sudo systemctl enable --now munge
-munge -n | unmunge >/dev/null
+log "2) Write slurmdbd.conf (host identity + local bind)"
+sudo mkdir -p /etc/slurm
+sudo tee /etc/slurm/slurmdbd.conf >/dev/null <<EOF
+AuthType=auth/munge
 
-###############################################################################
-# 4) Configure single-node Slurm (GPU)
-###############################################################################
-echo "[4/7] Configuring single-node Slurm..."
-HN="$(hostname -s)"
-MEM_MB="$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo)"
-# Keep a small reserve so Slurm doesn't overcommit
-REALMEM="$(( MEM_MB > 2048 ? MEM_MB - 1024 : MEM_MB ))"
-CPUS="$(nproc --all)"
+# Identity check: MUST match hostname -s (or hostname -f). Use short hostname.
+DbdHost=${HOST_SHORT}
+# Bind/listen only on loopback for safety
+DbdAddr=${SLURMDBD_ADDR}
+DbdPort=${SLURMDBD_PORT}
 
-sudo mkdir -p /var/lib/slurm/slurmctld /var/lib/slurm/slurmd
-sudo chown -R slurm:slurm /var/lib/slurm
-
-# Logs + run dir
-sudo mkdir -p /var/log/slurm /run/slurm
-sudo chown slurm:slurm /var/log/slurm /run/slurm
-sudo chmod 755 /var/log/slurm /run/slurm
-
-# cgroup config (helps device isolation; also required for clean accounting later)
-sudo tee /etc/slurm/cgroup.conf >/dev/null <<'EOF'
-CgroupAutomount=yes
-ConstrainCores=yes
-ConstrainRAMSpace=yes
-ConstrainDevices=yes
-EOF
-
-# gres config
-sudo tee /etc/slurm/gres.conf >/dev/null <<EOF
-$( [[ "${GRES_AUTODETECT}" == "1" ]] && echo "AutoDetect=nvml" || echo "Name=gpu File=/dev/nvidia0" )
-EOF
-
-# IMPORTANT: use real hostname for NodeName and partition
-sudo tee /etc/slurm/slurm.conf >/dev/null <<EOF
-ClusterName=local
-SlurmctldHost=${HN}
 SlurmUser=slurm
 
-AuthType=auth/munge
-CryptoType=crypto/munge
+StorageType=accounting_storage/mysql
+StorageHost=${DB_HOST}
+StoragePort=${DB_PORT}
+StorageUser=${DB_USER}
+StoragePass=${DB_PASS}
+StorageLoc=${DB_NAME}
 
-StateSaveLocation=/var/lib/slurm/slurmctld
-SlurmdSpoolDir=/var/lib/slurm/slurmd
-
-SlurmctldPort=6817
-SlurmdPort=6818
-
-SchedulerType=sched/backfill
-SelectType=select/cons_tres
-SelectTypeParameters=CR_Core
-
-ProctrackType=proctrack/cgroup
-TaskPlugin=task/cgroup
-JobAcctGatherType=jobacct_gather/cgroup
-
-SlurmctldLogFile=/var/log/slurm/slurmctld.log
-SlurmdLogFile=/var/log/slurm/slurmd.log
-
-# accounting disabled here; enable via slurmdbd scripts later
-AccountingStorageType=accounting_storage/none
-
-GresTypes=gpu
-
-NodeName=${HN} CPUs=${CPUS} RealMemory=${REALMEM} State=UNKNOWN Gres=gpu:1
-PartitionName=${PARTITION} Nodes=${HN} Default=YES MaxTime=INFINITE State=UP
+LogFile=/var/log/slurm/slurmdbd.log
+PidFile=/run/slurm/slurmdbd.pid
 EOF
+sudo chown slurm:slurm /etc/slurm/slurmdbd.conf
+sudo chmod 0600 /etc/slurm/slurmdbd.conf
 
-sudo systemctl enable --now slurmctld slurmd
+log "3) Start munge + slurmdbd (and verify it really listens)"
+sudo systemctl enable --now munge
 sudo systemctl restart munge
-sudo systemctl restart slurmctld slurmd
 
-echo "Slurm sanity:"
-sinfo -N -l
-scontrol show node "${HN}" | egrep -i 'NodeName|State|Gres|CfgTRES|Partitions' || true
+sudo systemctl enable --now slurmdbd
+sudo systemctl restart slurmdbd
 
-echo "GPU sanity:"
-nvidia-smi -L || true
+# IMPORTANT: systemd can say "running" while it is not yet listening.
+if ! wait_tcp "${SLURMDBD_ADDR}" "${SLURMDBD_PORT}" 30 1; then
+  echo "ERROR: slurmdbd is not accepting TCP on ${SLURMDBD_ADDR}:${SLURMDBD_PORT}"
+  echo "Status:"
+  sudo systemctl status slurmdbd --no-pager || true
+  echo "Logs:"
+  sudo journalctl -u slurmdbd -n 120 --no-pager || true
+  exit 1
+fi
 
-###############################################################################
-# 5) Build Apptainer runtime
-###############################################################################
-echo "[5/7] Building Apptainer runtime SIF..."
-cat > "${DEF}" <<'EOF'
-Bootstrap: docker
-From: debian:bookworm-slim
+log "4) Ensure slurm.conf uses accounting_storage/slurmdbd"
+# Remove any previous AccountingStorageType/Host lines and re-add deterministic values
+sudo sed -i '/^AccountingStorageType=/d;/^AccountingStorageHost=/d' /etc/slurm/slurm.conf
 
-%post
-  apt-get update
-  apt-get install -y --no-install-recommends \
-    ca-certificates \
-    libvulkan1 \
-    mesa-vulkan-drivers \
-    libstdc++6 \
-    libgcc-s1 \
-  && rm -rf /var/lib/apt/lists/*
+sudo tee -a /etc/slurm/slurm.conf >/dev/null <<EOF
 
-%environment
-  export LC_ALL=C
-  export LANG=C
-  export RUST_BACKTRACE=1
-
-%runscript
-  exec "$@"
+# --- Accounting via slurmdbd ---
+AccountingStorageType=accounting_storage/slurmdbd
+AccountingStorageHost=localhost
 EOF
 
-sudo apptainer build "${IMAGE}" "${DEF}"
+log "5) Restart slurmctld/slurmd and verify controller is up"
+sudo systemctl restart slurmctld
+sudo systemctl restart slurmd
 
-###############################################################################
-# 6) Write sbatch scripts (GPU-aware)
-###############################################################################
-echo "[6/7] Writing sbatch scripts..."
+if ! scontrol ping >/dev/null 2>&1; then
+  echo "ERROR: slurmctld not reachable after restart"
+  sudo systemctl status slurmctld --no-pager || true
+  sudo journalctl -u slurmctld -n 120 --no-pager || true
+  exit 1
+fi
 
-cat > "${REPO_ROOT}/slurm/run_pcg_case.sbatch" <<'EOF'
-#!/bin/bash
-#SBATCH --job-name=wgpu_pcg
-#SBATCH --output=slurm_logs/slurm-pcg-%j.out
-#SBATCH --error=slurm_logs/slurm-pcg-%j.err
-#SBATCH --time=01:00:00
-#SBATCH --cpus-per-task=1
-#SBATCH --mem=2G
-#SBATCH --gres=gpu:1
-#SBATCH --chdir=.
+log "6) Initialize accounting objects (cluster/account/user)"
+# These are idempotent-ish: cluster add may print "already exists".
+sudo sacctmgr -i add cluster "${CLUSTER_NAME}" || true
+sudo sacctmgr -i add account "${DEFAULT_ACCOUNT}" Description="Admin" || true
+sudo sacctmgr -i add user name="${DEFAULT_USER}" account="${DEFAULT_ACCOUNT}" DefaultAccount="${DEFAULT_ACCOUNT}" || true
 
-set -euo pipefail
-ROOT_DIR="${SLURM_SUBMIT_DIR:-$(pwd)}"
-cd "${ROOT_DIR}"
+# Make sure controller reloads assoc/qos state
+sudo scontrol reconfigure || true
 
-: "${IMAGE:?missing IMAGE}"
-: "${BIN:?missing BIN}"
-: "${CASE_DIR:?missing CASE_DIR}"
-: "${OUT_DIR:?missing OUT_DIR}"
-: "${BACKEND:=auto}"
-: "${MAX_ITERS:=2000}"
-: "${REL_TOL:=1e-4}"
-: "${ABS_TOL:=1e-7}"
-: "${APPTAINER_GPU:=--nv}"
-
-mkdir -p slurm_logs "${OUT_DIR}"
-OUT_X="${OUT_DIR}/x.bin"
-OUT_METRICS="${OUT_DIR}/metrics.json"
-
-apptainer exec ${APPTAINER_GPU} --bind "${ROOT_DIR}:${ROOT_DIR}" "${IMAGE}" bash -lc "
-  set -euo pipefail
-  cd '${ROOT_DIR}'
-  '${BIN}' --backend '${BACKEND}' run-pcg-case \
-    --case-dir '${CASE_DIR}' \
-    --max-iters '${MAX_ITERS}' \
-    --rel-tol '${REL_TOL}' \
-    --abs-tol '${ABS_TOL}' \
-    --out-x '${OUT_X}' \
-    --out-metrics '${OUT_METRICS}'
-"
-EOF
-chmod +x "${REPO_ROOT}/slurm/run_pcg_case.sbatch"
-
-cat > "${REPO_ROOT}/slurm/compare_x.sbatch" <<'EOF'
-#!/bin/bash
-#SBATCH --job-name=wgpu_cmp
-#SBATCH --output=slurm_logs/slurm-cmp-%j.out
-#SBATCH --error=slurm_logs/slurm-cmp-%j.err
-#SBATCH --time=00:10:00
-#SBATCH --cpus-per-task=1
-#SBATCH --mem=512M
-#SBATCH --gres=gpu:1
-#SBATCH --chdir=.
-
-set -euo pipefail
-ROOT_DIR="${SLURM_SUBMIT_DIR:-$(pwd)}"
-cd "${ROOT_DIR}"
-
-: "${IMAGE:?missing IMAGE}"
-: "${BIN:?missing BIN}"
-: "${X_REF:?missing X_REF}"
-: "${OUT_DIR:?missing OUT_DIR}"
-: "${CMP_REL_TOL:=1e-5}"
-: "${CMP_ABS_TOL:=1e-3}"
-: "${TOP_K:=10}"
-: "${APPTAINER_GPU:=--nv}"
-
-mkdir -p slurm_logs
-X="${OUT_DIR}/x.bin"
-
-apptainer exec ${APPTAINER_GPU} --bind "${ROOT_DIR}:${ROOT_DIR}" "${IMAGE}" bash -lc "
-  set -euo pipefail
-  cd '${ROOT_DIR}'
-  '${BIN}' compare-x \
-    --x-ref '${X_REF}' \
-    --x '${X}' \
-    --rel-tol '${CMP_REL_TOL}' \
-    --abs-tol '${CMP_ABS_TOL}' \
-    --top-k '${TOP_K}'
-"
-EOF
-chmod +x "${REPO_ROOT}/slurm/compare_x.sbatch"
-
-###############################################################################
-# 7) Submit demo jobs
-###############################################################################
-echo "[7/7] Submitting jobs..."
-cd "${REPO_ROOT}"
-
-export IMAGE BIN CASE_DIR OUT_DIR BACKEND MAX_ITERS REL_TOL ABS_TOL
-export X_REF CMP_REL_TOL CMP_ABS_TOL TOP_K
-export APPTAINER_GPU
-
-JOB1="$(sbatch --parsable --partition="${PARTITION}" slurm/run_pcg_case.sbatch)"
-echo "PCG job: ${JOB1}"
-
-JOB2="$(sbatch --parsable --partition="${PARTITION}" --dependency=afterok:${JOB1} slurm/compare_x.sbatch)"
-echo "COMPARE job: ${JOB2} (afterok:${JOB1})"
-
+log "7) Quick checks"
+echo "scontrol ping:"
+scontrol ping || true
 echo
-echo "Track: squeue"
-echo "Logs: slurm_logs/slurm-pcg-${JOB1}.out  slurm_logs/slurm-cmp-${JOB2}.out"
-echo "Outputs: ${OUT_DIR}/x.bin  ${OUT_DIR}/metrics.json"
+echo "Accounting config:"
+scontrol show config | egrep -i 'AccountingStorageType|AccountingStorageHost|JobAcctGatherType|SelectType' || true
+echo
+echo "Associations:"
+sacctmgr show assoc | head -n 30 || true
+echo
+echo "slurmdbd listening:"
+sudo ss -lntp | egrep "${SLURMDBD_PORT}|slurmdbd" || true
+
+log "DONE"
+echo "Next step (after you confirm this init is stable): we will add AccountingStorageTRES with gres/gpu safely."

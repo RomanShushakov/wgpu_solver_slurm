@@ -15,17 +15,24 @@ COMPOSE_FILE="${REPO_ROOT}/admin/docker-compose.mariadb.yml"
 PURGE_DOCKER="${PURGE_DOCKER:-0}"
 PURGE_DOCKER_VOLUME="${PURGE_DOCKER_VOLUME:-0}"
 PURGE_USERS="${PURGE_USERS:-0}"
+PURGE_ACCOUNTING="${PURGE_ACCOUNTING:-0}"
 
 echo "=== purge_local (vultr) ==="
 echo "REPO_ROOT=${REPO_ROOT}"
 echo "PURGE_DOCKER=${PURGE_DOCKER}"
 echo "PURGE_DOCKER_VOLUME=${PURGE_DOCKER_VOLUME}"
 echo "PURGE_USERS=${PURGE_USERS}"
+echo "PURGE_ACCOUNTING=${PURGE_ACCOUNTING}"
 echo "==========================="
 
 echo "[1/9] Stop services (ignore failures)..."
-sudo systemctl stop slurmctld slurmd slurmdbd munge 2>/dev/null || true
-sudo systemctl disable slurmctld slurmd slurmdbd munge 2>/dev/null || true
+sudo systemctl stop slurmctld slurmd munge 2>/dev/null || true
+sudo systemctl disable slurmctld slurmd munge 2>/dev/null || true
+
+if [[ "${PURGE_ACCOUNTING}" == "1" ]]; then
+  sudo systemctl stop slurmdbd 2>/dev/null || true
+  sudo systemctl disable slurmdbd 2>/dev/null || true
+fi
 
 echo "[2/9] Kill any remaining slurm daemons (best-effort)..."
 sudo pkill -x slurmctld 2>/dev/null || true
@@ -51,13 +58,21 @@ else
   echo "[3/9] Docker purge disabled (skipping MariaDB container cleanup)"
 fi
 
-echo "[4/9] Purge packages (Slurm/Munge/Apptainer/DB tools only)..."
-# Purge what exists; do NOT fail if a package name isn't known in apt repos.
+echo "[4/9] Purge packages (Slurm/Munge/Apptainer + optional accounting)..."
+
+# Always remove Slurm + Munge when purging cluster
 sudo apt-get purge -y \
-  slurm-wlm slurmctld slurmd slurm-client slurmdbd \
+  slurm-wlm slurmctld slurmd slurm-client \
   munge libmunge2 \
-  mariadb-client mariadb-server \
   || true
+
+# Optional: remove slurmdbd + mysql plugin (accounting components only)
+if [[ "${PURGE_ACCOUNTING}" == "1" ]]; then
+  sudo apt-get purge -y slurmdbd slurm-wlm-mysql-plugin || true
+  sudo rm -f /etc/slurm/slurmdbd.conf || true
+fi
+
+# Never purge mariadb packages (we use Docker). If they exist, user already removed them manually.
 
 # Apptainer may have been installed from a .deb and might not be in apt indexes.
 if dpkg -s apptainer >/dev/null 2>&1; then
@@ -76,6 +91,7 @@ sudo rm -rf \
   /var/log/slurm /var/log/slurm* /var/log/slurmctld.log /var/log/slurmd.log /var/log/slurmdbd.log \
   /var/lib/munge /run/munge /var/log/munge \
   || true
+sudo rm -f /etc/tmpfiles.d/slurm.conf || true
 
 echo "[6/9] Remove apptainer caches (root + current user best-effort)..."
 for home in /root "/home/${SUDO_USER:-}" "${HOME}"; do
