@@ -28,19 +28,18 @@ exec >"${LOG_DIR}/cmp-${SLURM_JOB_ID}.out" 2>"${LOG_DIR}/cmp-${SLURM_JOB_ID}.err
 DRI_BIND=()
 [[ -d /dev/dri ]] && DRI_BIND+=(--bind /dev/dri:/dev/dri)
 
-# --- Apptainer GPU env + binds (critical) ---
 source "${ROOT_DIR}/slurm/lib/apptainer_gpu_env.sh"
 GPU_BINDS=( $(build_gpu_binds) )
 
-apptainer exec --nv \
+apptainer exec \
   "${GPU_BINDS[@]}" \
   "${DRI_BIND[@]}" \
   --bind "${ROOT_DIR}:${ROOT_DIR}" \
-  "${IMAGE}" bash -c "
+  "${IMAGE}" bash -lc "
     set -euo pipefail
+    # no need to force VK_ICD_FILENAMES here, but harmless if present
     $(print_gpu_env_exports)
     cd '${ROOT_DIR}'
-    (command -v vulkaninfo >/dev/null 2>&1 && vulkaninfo --summary) || true
 
     '${BIN}' compare-x \
       --x-ref '${X_REF}' \

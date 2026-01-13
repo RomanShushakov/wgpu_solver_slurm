@@ -58,33 +58,6 @@ where_flags=()
 FIELDS="JobIDRaw,User,Account,Partition,State,ElapsedRaw,AllocCPUS,ReqTRES,AllocTRES,Submit,Start,End,JobName"
 RAW="$(sacct "${sacct_flags[@]}" "${time_flags[@]}" "${where_flags[@]}" -o "${FIELDS}")"
 
-# Read a snapshot file produced by gpu_wrap:
-# Header:
-# ts,host,job_id,job_user,index,uuid,name,utilization.gpu,utilization.memory,memory.used,memory.total,power.draw,temperature.gpu
-# Data:
-# 2026-..,host,62,user1,0,UUID,NAME,0,0,1,2048,,    (power/temp may be empty)
-#
-# Returns: util_gpu|util_mem|mem_used|mem_total|power|temp  (always 6 fields)
-read_gpu_snapshot_file() {
-  local file="$1"
-  [[ -f "$file" ]] || { echo "|||||"; return 0; }
-
-  awk -F',' '
-    function trim(s){ gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
-    NR==1 { next } # skip header
-    NR==2 {
-      for (i=1; i<=NF; i++) $i=trim($i);
-      # Positions in gpu_wrap files:
-      #  8 util.gpu, 9 util.mem, 10 mem.used, 11 mem.total, 12 power, 13 temp
-      util_gpu=$8; util_mem=$9; mem_used=$10; mem_total=$11;
-      power=(NF>=12 ? $12 : "");
-      temp =(NF>=13 ? $13 : "");
-      print util_gpu "|" util_mem "|" mem_used "|" mem_total "|" power "|" temp;
-      exit
-    }
-    END { }
-  ' "$file" 2>/dev/null || echo "|||||"
-}
 
 # Backward-compat: read combined gpu-<jobid>.csv format:
 # JOBID,START,timestamp,index,uuid,name,util.gpu,util.mem,mem.used,mem.total,power,temp
@@ -110,6 +83,37 @@ read_gpu_snapshot_from_combined() {
   ' "$file" 2>/dev/null || echo "|||||"
 }
 
+# Read first GPU row from gpu_wrap CSV snapshot (job-<id>-start.csv / job-<id>-end.csv)
+# Output: util_gpu|util_mem|mem_used|mem_total|power|temp   (or "|||||")
+read_gpu_snapshot_from_wrap() {
+  local file="$1"
+  [[ -f "$file" ]] || { echo "|||||"; return 0; }
+
+  # Header:
+  # ts,host,job_id,job_user,index,uuid,name,utilization.gpu,utilization.memory,memory.used,memory.total,power.draw,temperature.gpu
+  awk -F',' '
+    function trim(s){ gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
+    NR==2 {
+      for (i=1; i<=NF; i++) $i=trim($i);
+
+      util_gpu=$8
+      util_mem=$9
+      mem_used=$10
+      mem_total=$11
+      power=$12
+      temp=$13
+
+      # Normalize [N/A] -> empty
+      if (power ~ /^\[N\/A\]$/) power=""
+      if (temp  ~ /^\[N\/A\]$/) temp=""
+
+      print util_gpu "|" util_mem "|" mem_used "|" mem_total "|" power "|" temp
+      exit
+    }
+    END { }
+  ' "$file" 2>/dev/null || echo "|||||"
+}
+
 AUGMENTED="$(mktemp)"
 trap 'rm -f "${AUGMENTED}"' EXIT
 
@@ -122,8 +126,8 @@ while IFS= read -r line; do
   efile="${GPU_LOG_DIR}/job-${jobid}-end.csv"
 
   if [[ -f "${sfile}" || -f "${efile}" ]]; then
-    start_vals="$(read_gpu_snapshot_file "${sfile}")"
-    end_vals="$(read_gpu_snapshot_file "${efile}")"
+    start_vals="$(read_gpu_snapshot_from_wrap "${sfile}")"
+    end_vals="$(read_gpu_snapshot_from_wrap "${efile}")"
   else
     # Fallback: older combined format
     gfile="${GPU_LOG_DIR}/gpu-${jobid}.csv"
