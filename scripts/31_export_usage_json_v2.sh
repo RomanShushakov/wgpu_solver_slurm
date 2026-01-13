@@ -59,25 +59,40 @@ where_flags=()
 FIELDS="JobIDRaw,User,Account,Partition,State,ElapsedRaw,AllocCPUS,ReqTRES,AllocTRES,Submit,Start,End,JobName"
 RAW="$(sacct "${sacct_flags[@]}" "${time_flags[@]}" "${where_flags[@]}" -o "${FIELDS}")"
 
-# Read first GPU row from start/end CSV snapshot, return selected columns:
-# util_gpu, mem_used, power, temp
-read_gpu_snapshot() {
+# For gpu-<jobid>.csv produced by your sbatch scripts:
+# Each line looks like:
+# JOBID,START,timestamp,index,uuid,name,util.gpu,util.mem,mem.used,mem.total
+# JOBID,END,  timestamp,index,uuid,name,util.gpu,util.mem,mem.used,mem.total
+#
+# Returns: util_gpu|mem_used|util_mem|mem_total  (numbers), or "|||"
+read_gpu_snapshot_from_combined() {
   local file="$1"
-  if [[ ! -f "${file}" ]]; then
+  local phase="$2"   # START or END
+
+  if [[ ! -f "$file" ]]; then
     echo "|||"
     return 0
   fi
-  # Expected header:
-  # ts,host,job_id,job_user,index,uuid,name,utilization.gpu,utilization.memory,memory.used,memory.total,power.draw,temperature.gpu
-  # Data row: we take NR==2 (first gpu)
-  awk -F',' 'NR==2{
-    gsub(/^ +| +$/, "", $8);  # utilization.gpu
-    gsub(/^ +| +$/, "", $10); # memory.used
-    gsub(/^ +| +$/, "", $12); # power.draw
-    gsub(/^ +| +$/, "", $13); # temperature.gpu
-    print $8 "|" $10 "|" $12 "|" $13;
-    exit
-  }' "${file}" 2>/dev/null || echo "|||"
+
+  # Take the first GPU row for that phase (GPU index 0 usually)
+  awk -F',' -v phase="$phase" '
+    $2==phase {
+      # trim spaces
+      for (i=1; i<=NF; i++) gsub(/^ +| +$/, "", $i);
+
+      util_gpu=$7;
+      util_mem=$8;
+      mem_used=$9;
+      mem_total=$10;
+
+      # Guard: only print if util_gpu looks numeric
+      if (util_gpu ~ /^[0-9.]+$/) {
+        print util_gpu "|" mem_used "|" util_mem "|" mem_total;
+        exit
+      }
+    }
+    END { if (NR==0) print "|||"; }
+  ' "$file" 2>/dev/null || echo "|||"
 }
 
 # Augment each sacct line with:
@@ -89,11 +104,10 @@ while IFS= read -r line; do
   [[ -z "${line}" ]] && continue
   jobid="$(echo "${line}" | cut -d'|' -f1)"
 
-  sfile="${GPU_LOG_DIR}/job-${jobid}-start.csv"
-  efile="${GPU_LOG_DIR}/job-${jobid}-end.csv"
+  gfile="${GPU_LOG_DIR}/gpu-${jobid}.csv"
 
-  start_vals="$(read_gpu_snapshot "${sfile}")"
-  end_vals="$(read_gpu_snapshot "${efile}")"
+  start_vals="$(read_gpu_snapshot_from_combined "${gfile}" "START")"
+  end_vals="$(read_gpu_snapshot_from_combined "${gfile}" "END")"
 
   echo "${line}|${start_vals}|${end_vals}" >> "${AUGMENTED}"
 done <<< "${RAW}"
@@ -143,6 +157,16 @@ jq -Rn \
         gpu_mem_used_end:     (($f[18] // "") | to_num_or_null),
         gpu_power_end:        (($f[19] // "") | to_num_or_null),
         gpu_temp_end:         (($f[20] // "") | to_num_or_null)
+
+        gpu_util_start:       (($f[13] // "") | to_num_or_null),
+        gpu_mem_used_start:   (($f[14] // "") | to_num_or_null),
+        gpu_mem_util_start:   (($f[15] // "") | to_num_or_null),
+        gpu_mem_total_start:  (($f[16] // "") | to_num_or_null),
+
+        gpu_util_end:         (($f[17] // "") | to_num_or_null),
+        gpu_mem_used_end:     (($f[18] // "") | to_num_or_null),
+        gpu_mem_util_end:     (($f[19] // "") | to_num_or_null),
+        gpu_mem_total_end:    (($f[20] // "") | to_num_or_null)
       }
     | .billing = (.alloc_tres | tres_int("billing") | if . == 0 then (.alloc_cpus) else . end)
     | .gpu_count = (.alloc_tres | tres_int("gres/gpu"))
