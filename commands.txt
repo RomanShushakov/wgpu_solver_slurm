@@ -20,6 +20,7 @@ ABS_TOL=1e-7 \
 CMP_REL_TOL=1e-3 \
 CMP_ABS_TOL=1e-2 \
 bash init_local.sh
+bash enable_gpu_tres.sh
 
 # Step 10-11: DB + slurmdbd accounting
 export DB_ROOT_PASS="rootpass_change_me"

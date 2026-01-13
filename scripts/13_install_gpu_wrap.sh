@@ -1,4 +1,3 @@
-# scripts/13_install_gpu_wrap.sh
 #!/usr/bin/env bash
 set -euo pipefail
 
