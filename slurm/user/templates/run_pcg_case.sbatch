@@ -32,8 +32,27 @@ DRI_BIND=()
 [[ -d /dev/dri ]] && DRI_BIND+=(--bind /dev/dri:/dev/dri)
 
 # GPU snapshots directory (must be 1777 on host; init_local.sh does this)
+NVIDIA_SMI="${NVIDIA_SMI:-/usr/bin/nvidia-smi}"
 GPU_LOG_DIR="/var/log/slurm/gpu-metrics"
+GPU_LOG_FILE="${GPU_LOG_DIR}/gpu-${SLURM_JOB_ID}.csv"
+
 mkdir -p "${GPU_LOG_DIR}" 2>/dev/null || true
+
+# Debug: record what user + PATH we had
+{
+  echo "JOB=${SLURM_JOB_ID} USER=$(id -un) UID=$(id -u) PATH=$PATH"
+  ls -ld "${GPU_LOG_DIR}" || true
+  ls -l "${NVIDIA_SMI}" || true
+} >> "${GPU_LOG_FILE}.debug" 2>&1 || true
+
+if [[ -x "${NVIDIA_SMI}" ]]; then
+  "${NVIDIA_SMI}" --query-gpu=timestamp,index,uuid,name,utilization.gpu,utilization.memory,memory.used,memory.total \
+    --format=csv,noheader,nounits \
+    | sed "s/^/${SLURM_JOB_ID},START,/" \
+    >> "${GPU_LOG_FILE}" 2>> "${GPU_LOG_FILE}.debug" || true
+else
+  echo "nvidia-smi not executable at ${NVIDIA_SMI}" >> "${GPU_LOG_FILE}.debug" 2>&1 || true
+fi
 
 if command -v nvidia-smi >/dev/null 2>&1; then
   nvidia-smi --query-gpu=timestamp,index,uuid,name,utilization.gpu,utilization.memory,memory.used,memory.total \
