@@ -10,10 +10,13 @@ log "Step 13: Install gpu_wrap (Option A: nvidia-smi snapshots start/end)"
 echo "WRAP_PATH=${WRAP_PATH}"
 echo "LOG_DIR=${LOG_DIR}"
 
-log "[1/3] Create log directory"
-sudo mkdir -p "${LOG_DIR}"
-sudo chmod 0755 "${LOG_DIR}"
+log "[1/3] Create log directory (sticky world-writable so job users can write)"
+sudo install -d -m 1777 "${LOG_DIR}"
+# Keep owner root, but allow everyone to create files (sticky bit prevents deletion by others)
 sudo chown root:root "${LOG_DIR}"
+sudo chmod 1777 "${LOG_DIR}"
+echo "LOG_DIR perms:"
+sudo ls -ld "${LOG_DIR}"
 
 log "[2/3] Install ${WRAP_PATH}"
 sudo tee "${WRAP_PATH}" >/dev/null <<'EOF'
@@ -30,6 +33,7 @@ ts() { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
 start_file="${LOG_DIR}/job-${job_id}-start.csv"
 end_file="${LOG_DIR}/job-${job_id}-end.csv"
 
+# Keep this order stable forever (exporter depends on it)
 query="index,uuid,name,utilization.gpu,utilization.memory,memory.used,memory.total,power.draw,temperature.gpu"
 
 snap() {
@@ -37,23 +41,37 @@ snap() {
   {
     echo "ts,host,job_id,job_user,${query}"
     if command -v nvidia-smi >/dev/null 2>&1; then
-      # csv,noheader,nounits -> stable for awk/jq parsing
-      nvidia-smi --query-gpu="${query}" --format=csv,noheader,nounits \
-        | awk -v T="$(ts)" -v H="${host}" -v J="${job_id}" -v U="${job_user}" 'BEGIN{FS=","; OFS=","} {gsub(/^ +| +$/, "", $0); print T,H,J,U,$0}'
+      # Make output stable:
+      # - csv,noheader,nounits
+      # - trim whitespace
+      # - strip "[N/A]" so numbers parse cleanly (becomes empty)
+      nvidia-smi --query-gpu="${query}" --format=csv,noheader,nounits 2>/dev/null \
+        | sed -e 's/\[N\/A\]//g' \
+        | awk -v T="$(ts)" -v H="${host}" -v J="${job_id}" -v U="${job_user}" '
+            BEGIN{FS=","; OFS=","}
+            {
+              # trim each field
+              for(i=1;i<=NF;i++){ gsub(/^[ \t]+|[ \t]+$/, "", $i) }
+              print T,H,J,U,$0
+            }'
     else
-      echo "$(ts),${host},${job_id},${job_user},NO_NVIDIA_SMI"
+      # If no nvidia-smi, keep header but write one marker row
+      echo "$(ts),${host},${job_id},${job_user},NO_NVIDIA_SMI,,,,,,,,"
     fi
-  } > "${out}"
-  chmod 0644 "${out}" || true
+  } > "${out}" || true
+
+  # Don't fail job if chmod fails
+  chmod 0644 "${out}" 2>/dev/null || true
 }
 
-snap "${start_file}"
+# Start snapshot (never fail job on snapshot issues)
+snap "${start_file}" || true
 
 # Run the payload
 "$@"
 rc=$?
 
-# Always attempt end snapshot
+# End snapshot (never fail job on snapshot issues)
 snap "${end_file}" || true
 
 exit $rc

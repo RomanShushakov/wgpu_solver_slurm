@@ -1,4 +1,3 @@
-# scripts/31_export_usage_json_v2.sh  (UPDATED: attaches Option-A GPU snapshots if present)
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -59,40 +58,58 @@ where_flags=()
 FIELDS="JobIDRaw,User,Account,Partition,State,ElapsedRaw,AllocCPUS,ReqTRES,AllocTRES,Submit,Start,End,JobName"
 RAW="$(sacct "${sacct_flags[@]}" "${time_flags[@]}" "${where_flags[@]}" -o "${FIELDS}")"
 
-# For gpu-<jobid>.csv produced by your sbatch scripts:
-# Each line looks like:
-# JOBID,START,timestamp,index,uuid,name,util.gpu,util.mem,mem.used,mem.total
-# JOBID,END,  timestamp,index,uuid,name,util.gpu,util.mem,mem.used,mem.total
+# Read a snapshot file produced by gpu_wrap:
+# Header:
+# ts,host,job_id,job_user,index,uuid,name,utilization.gpu,utilization.memory,memory.used,memory.total,power.draw,temperature.gpu
+# Data:
+# 2026-..,host,62,user1,0,UUID,NAME,0,0,1,2048,,    (power/temp may be empty)
 #
-# Returns: util_gpu|util_mem|mem_used|mem_total|power|temp  (or "|||||")
-read_gpu_snapshot_from_combined() {
+# Returns: util_gpu|util_mem|mem_used|mem_total|power|temp  (always 6 fields)
+read_gpu_snapshot_file() {
   local file="$1"
-  local phase="$2"
-
   [[ -f "$file" ]] || { echo "|||||"; return 0; }
 
-  awk -F',' -v phase="$phase" '
+  awk -F',' '
     function trim(s){ gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
-    $2==phase {
+    NR==1 { next } # skip header
+    NR==2 {
       for (i=1; i<=NF; i++) $i=trim($i);
-
-      # Expected positions after prefix "JOBID,PHASE,"
-      util_gpu=$7
-      util_mem=$8
-      mem_used=$9
-      mem_total=$10
-      power=$11
-      temp=$12
-
-      print util_gpu "|" util_mem "|" mem_used "|" mem_total "|" power "|" temp
+      # Positions in gpu_wrap files:
+      #  8 util.gpu, 9 util.mem, 10 mem.used, 11 mem.total, 12 power, 13 temp
+      util_gpu=$8; util_mem=$9; mem_used=$10; mem_total=$11;
+      power=(NF>=12 ? $12 : "");
+      temp =(NF>=13 ? $13 : "");
+      print util_gpu "|" util_mem "|" mem_used "|" mem_total "|" power "|" temp;
       exit
     }
     END { }
   ' "$file" 2>/dev/null || echo "|||||"
 }
 
-# Augment each sacct line with:
-# gpu_util_start|gpu_mem_used_start|gpu_mem_util_start|gpu_mem_total_start|gpu_util_end|gpu_mem_used_end|gpu_mem_util_end|gpu_mem_total_end
+# Backward-compat: read combined gpu-<jobid>.csv format:
+# JOBID,START,timestamp,index,uuid,name,util.gpu,util.mem,mem.used,mem.total,power,temp
+# (older logs may have fewer columns; we tolerate that)
+read_gpu_snapshot_from_combined() {
+  local file="$1"
+  local phase="$2"
+  [[ -f "$file" ]] || { echo "|||||"; return 0; }
+
+  awk -F',' -v phase="$phase" '
+    function trim(s){ gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
+    BEGIN{ found=0 }
+    $2==phase {
+      for (i=1; i<=NF; i++) $i=trim($i);
+      util_gpu=$7; util_mem=$8; mem_used=$9; mem_total=$10;
+      power=(NF>=11 ? $11 : "");
+      temp =(NF>=12 ? $12 : "");
+      print util_gpu "|" util_mem "|" mem_used "|" mem_total "|" power "|" temp;
+      found=1;
+      exit
+    }
+    END { if (!found) print "|||||" }
+  ' "$file" 2>/dev/null || echo "|||||"
+}
+
 AUGMENTED="$(mktemp)"
 trap 'rm -f "${AUGMENTED}"' EXIT
 
@@ -100,10 +117,19 @@ while IFS= read -r line; do
   [[ -z "${line}" ]] && continue
   jobid="$(echo "${line}" | cut -d'|' -f1)"
 
-  gfile="${GPU_LOG_DIR}/gpu-${jobid}.csv"
+  # Prefer gpu_wrap format (start/end separate)
+  sfile="${GPU_LOG_DIR}/job-${jobid}-start.csv"
+  efile="${GPU_LOG_DIR}/job-${jobid}-end.csv"
 
-  start_vals="$(read_gpu_snapshot_from_combined "${gfile}" "START")"
-  end_vals="$(read_gpu_snapshot_from_combined "${gfile}" "END")"
+  if [[ -f "${sfile}" || -f "${efile}" ]]; then
+    start_vals="$(read_gpu_snapshot_file "${sfile}")"
+    end_vals="$(read_gpu_snapshot_file "${efile}")"
+  else
+    # Fallback: older combined format
+    gfile="${GPU_LOG_DIR}/gpu-${jobid}.csv"
+    start_vals="$(read_gpu_snapshot_from_combined "${gfile}" "START")"
+    end_vals="$(read_gpu_snapshot_from_combined "${gfile}" "END")"
+  fi
 
   echo "${line}|${start_vals}|${end_vals}" >> "${AUGMENTED}"
 done <<< "${RAW}"
@@ -115,6 +141,9 @@ jq -Rn \
   --arg account "${FILTER_ACCOUNT}" \
   --arg gpu_log_dir "${GPU_LOG_DIR}" '
   def to_int:
+    if . == null or . == "" then 0 else (try (.|tonumber) catch 0) end;
+
+  def num0:
     if . == null or . == "" then 0 else (try (.|tonumber) catch 0) end;
 
   def to_num_or_null:
@@ -143,8 +172,8 @@ jq -Rn \
         end:         ($f[11] // ""),
         job_name:    ($f[12] // ""),
 
-        # Option-A snapshots from gpu-<jobid>.csv (first GPU row), may be null if no logs
-        # Parsed order: util_gpu | mem_used | util_mem | mem_total | power | temp
+        # Snapshot fields (6 per phase):
+        # util_gpu | util_mem | mem_used | mem_total | power | temp
         gpu_util_start:       (($f[13] // "") | to_num_or_null),
         gpu_mem_util_start:   (($f[14] // "") | to_num_or_null),
         gpu_mem_used_start:   (($f[15] // "") | to_num_or_null),
@@ -164,12 +193,10 @@ jq -Rn \
     | .cpu_seconds = (.elapsed_sec * .alloc_cpus)
     | .billing_seconds = (.elapsed_sec * .billing)
     | .gpu_seconds = (.elapsed_sec * .gpu_count)
-    | .gpu_activity_avg = (
-        ( (.gpu_util_start // 0) + (.gpu_util_end // 0) ) / 2
-      )
-    | .gpu_mem_used_delta = (
-        ( .gpu_mem_used_end // .gpu_mem_used_start ) - ( .gpu_mem_used_start // 0 )
-      )
+
+    # Null-safe “activity” helpers
+    | .gpu_activity_avg = ( ((.gpu_util_start | num0) + (.gpu_util_end | num0)) / 2 )
+    | .gpu_mem_used_delta = ( (.gpu_mem_used_end | num0) - (.gpu_mem_used_start | num0) )
   ] as $jobs
   | {
       meta: {
