@@ -45,8 +45,10 @@ mkdir -p "${GPU_LOG_DIR}" 2>/dev/null || true
   ls -l "${NVIDIA_SMI}" || true
 } >> "${GPU_LOG_FILE}.debug" 2>&1 || true
 
+
+
 if [[ -x "${NVIDIA_SMI}" ]]; then
-  "${NVIDIA_SMI}" --query-gpu=timestamp,index,uuid,name,utilization.gpu,utilization.memory,memory.used,memory.total \
+  "${NVIDIA_SMI}" --query-gpu=timestamp,index,uuid,name,utilization.gpu,utilization.memory,memory.used,memory.total,power.draw,temperature.gpu \
     --format=csv,noheader,nounits \
     | sed "s/^/${SLURM_JOB_ID},START,/" \
     >> "${GPU_LOG_FILE}" 2>> "${GPU_LOG_FILE}.debug" || true

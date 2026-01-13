@@ -25,18 +25,18 @@ echo "PURGE_USERS=${PURGE_USERS}"
 echo "PURGE_ACCOUNTING=${PURGE_ACCOUNTING}"
 echo "==========================="
 
-echo "[1/9] Stop services (ignore failures)..."
+echo "[1/10] Stop services (ignore failures)..."
 sudo systemctl stop slurmctld slurmd slurmdbd munge 2>/dev/null || true
 sudo systemctl disable slurmctld slurmd slurmdbd munge 2>/dev/null || true
 
-echo "[2/9] Kill any remaining slurm daemons (best-effort)..."
+echo "[2/10] Kill any remaining slurm daemons (best-effort)..."
 sudo pkill -x slurmctld 2>/dev/null || true
 sudo pkill -x slurmd    2>/dev/null || true
 sudo pkill -x slurmdbd  2>/dev/null || true
 sudo pkill -x munged    2>/dev/null || true
 
 if [[ "${PURGE_DOCKER}" == "1" ]]; then
-  echo "[3/9] Stop/remove MariaDB container (docker compose)..."
+  echo "[3/10] Stop/remove MariaDB container (docker compose)..."
   if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
     if [[ -f "${COMPOSE_FILE}" ]]; then
       if [[ "${PURGE_DOCKER_VOLUME}" == "1" ]]; then
@@ -50,10 +50,10 @@ if [[ "${PURGE_DOCKER}" == "1" ]]; then
     echo "  (docker not installed; skipping)"
   fi
 else
-  echo "[3/9] Docker purge disabled (skipping MariaDB container cleanup)"
+  echo "[3/10] Docker purge disabled (skipping MariaDB container cleanup)"
 fi
 
-echo "[4/9] Purge packages (Slurm/Munge/Apptainer + optional accounting)..."
+echo "[4/10] Purge packages (Slurm/Munge/Apptainer + optional accounting)..."
 
 # Always remove Slurm + Munge when purging cluster
 sudo apt-get purge -y \
@@ -89,7 +89,7 @@ if dpkg -s singularity-container >/dev/null 2>&1; then
   sudo dpkg -P singularity-container || true
 fi
 
-echo "[5/9] Remove configs/state/logs..."
+echo "[5/10] Remove configs/state/logs..."
 sudo rm -rf \
   /etc/slurm /etc/munge /etc/apptainer /usr/local/etc/apptainer \
   /var/lib/slurm /var/spool/slurm /run/slurm /run/slurm* \
@@ -109,7 +109,7 @@ sudo rm -f /etc/tmpfiles.d/slurm.conf || true
 sudo systemctl daemon-reload || true
 sudo systemctl reset-failed slurmdbd slurmctld slurmd munge 2>/dev/null || true
 
-echo "[6/9] Remove apptainer caches (root + current user best-effort)..."
+echo "[6/10] Remove apptainer caches (root + current user best-effort)..."
 for home in /root "/home/${SUDO_USER:-}" "${HOME}"; do
   if [[ -n "${home}" && -d "${home}" ]]; then
     sudo rm -rf \
@@ -121,21 +121,25 @@ for home in /root "/home/${SUDO_USER:-}" "${HOME}"; do
 done
 
 if [[ "${PURGE_USERS}" == "1" ]]; then
-  echo "[7/9] Remove demo Linux users (best-effort)..."
+  echo "[7/10] Remove demo Linux users (best-effort)..."
   for u in user1 user2 user3; do
     if id "${u}" >/dev/null 2>&1; then
       sudo userdel -r "${u}" 2>/dev/null || sudo userdel "${u}" 2>/dev/null || true
     fi
   done
 else
-  echo "[7/9] User purge disabled (skipping Linux user removal)"
+  echo "[7/10] User purge disabled (skipping Linux user removal)"
 fi
 
-echo "[8/9] Autoremove + clean..."
+echo "[8/10] Autoremove + clean..."
 sudo apt-get autoremove -y || true
 sudo apt-get autoclean -y || true
 
-echo "[9/9] Done."
+echo "[9/10] Recreate proper folder for gpu metrics"
+sudo rm -rf /var/log/slurm/gpu-metrics 2>/dev/null || true
+sudo install -d -m 1777 /var/log/slurm/gpu-metrics
+
+echo "[10/10] Done."
 echo "Verify:"
 echo "  dpkg -l | grep -E 'slurm|munge|apptainer|singularity' || true"
 if [[ "${PURGE_DOCKER}" == "1" ]]; then

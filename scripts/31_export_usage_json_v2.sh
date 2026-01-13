@@ -64,35 +64,31 @@ RAW="$(sacct "${sacct_flags[@]}" "${time_flags[@]}" "${where_flags[@]}" -o "${FI
 # JOBID,START,timestamp,index,uuid,name,util.gpu,util.mem,mem.used,mem.total
 # JOBID,END,  timestamp,index,uuid,name,util.gpu,util.mem,mem.used,mem.total
 #
-# Returns: util_gpu|mem_used|util_mem|mem_total  (numbers), or "|||"
+# Returns: util_gpu|util_mem|mem_used|mem_total|power|temp  (or "|||||")
 read_gpu_snapshot_from_combined() {
   local file="$1"
-  local phase="$2"   # START or END
+  local phase="$2"
 
-  if [[ ! -f "$file" ]]; then
-    echo "|||"
-    return 0
-  fi
+  [[ -f "$file" ]] || { echo "|||||"; return 0; }
 
-  # Take the first GPU row for that phase (GPU index 0 usually)
   awk -F',' -v phase="$phase" '
+    function trim(s){ gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
     $2==phase {
-      # trim spaces
-      for (i=1; i<=NF; i++) gsub(/^ +| +$/, "", $i);
+      for (i=1; i<=NF; i++) $i=trim($i);
 
-      util_gpu=$7;
-      util_mem=$8;
-      mem_used=$9;
-      mem_total=$10;
+      # Expected positions after prefix "JOBID,PHASE,"
+      util_gpu=$7
+      util_mem=$8
+      mem_used=$9
+      mem_total=$10
+      power=$11
+      temp=$12
 
-      # Guard: only print if util_gpu looks numeric
-      if (util_gpu ~ /^[0-9.]+$/) {
-        print util_gpu "|" mem_used "|" util_mem "|" mem_total;
-        exit
-      }
+      print util_gpu "|" util_mem "|" mem_used "|" mem_total "|" power "|" temp
+      exit
     }
-    END { if (NR==0) print "|||"; }
-  ' "$file" 2>/dev/null || echo "|||"
+    END { }
+  ' "$file" 2>/dev/null || echo "|||||"
 }
 
 # Augment each sacct line with:
@@ -148,22 +144,32 @@ jq -Rn \
         job_name:    ($f[12] // ""),
 
         # Option-A snapshots from gpu-<jobid>.csv (first GPU row), may be null if no logs
-        # Parsed order: util_gpu | mem_used | util_mem | mem_total
+        # Parsed order: util_gpu | mem_used | util_mem | mem_total | power | temp
         gpu_util_start:       (($f[13] // "") | to_num_or_null),
-        gpu_mem_used_start:   (($f[14] // "") | to_num_or_null),
-        gpu_mem_util_start:   (($f[15] // "") | to_num_or_null),
+        gpu_mem_util_start:   (($f[14] // "") | to_num_or_null),
+        gpu_mem_used_start:   (($f[15] // "") | to_num_or_null),
         gpu_mem_total_start:  (($f[16] // "") | to_num_or_null),
+        gpu_power_start:      (($f[17] // "") | to_num_or_null),
+        gpu_temp_start:       (($f[18] // "") | to_num_or_null),
 
-        gpu_util_end:         (($f[17] // "") | to_num_or_null),
-        gpu_mem_used_end:     (($f[18] // "") | to_num_or_null),
-        gpu_mem_util_end:     (($f[19] // "") | to_num_or_null),
-        gpu_mem_total_end:    (($f[20] // "") | to_num_or_null)
+        gpu_util_end:         (($f[19] // "") | to_num_or_null),
+        gpu_mem_util_end:     (($f[20] // "") | to_num_or_null),
+        gpu_mem_used_end:     (($f[21] // "") | to_num_or_null),
+        gpu_mem_total_end:    (($f[22] // "") | to_num_or_null),
+        gpu_power_end:        (($f[23] // "") | to_num_or_null),
+        gpu_temp_end:         (($f[24] // "") | to_num_or_null)
       }
     | .billing = (.alloc_tres | tres_int("billing") | if . == 0 then (.alloc_cpus) else . end)
     | .gpu_count = (.alloc_tres | tres_int("gres/gpu"))
     | .cpu_seconds = (.elapsed_sec * .alloc_cpus)
     | .billing_seconds = (.elapsed_sec * .billing)
     | .gpu_seconds = (.elapsed_sec * .gpu_count)
+    | .gpu_activity_avg = (
+        ( (.gpu_util_start // 0) + (.gpu_util_end // 0) ) / 2
+      )
+    | .gpu_mem_used_delta = (
+        ( .gpu_mem_used_end // .gpu_mem_used_start ) - ( .gpu_mem_used_start // 0 )
+      )
   ] as $jobs
   | {
       meta: {

@@ -315,6 +315,7 @@ sudo mkdir -p /var/log/slurm/gpu-metrics
 # Jobs run as normal users; make this directory world-writable but sticky (safe-ish)
 sudo chown root:slurm /var/log/slurm/gpu-metrics || true
 sudo chmod 1777 /var/log/slurm/gpu-metrics
+sudo install -d -m 1777 /var/log/slurm/gpu-metrics
 
 log "4) Start slurmctld/slurmd (slurmdbd must be reachable first)"
 # Guard: slurmctld will die if it can’t reach slurmdbd and you later enable AccountingStorageTRES.
