@@ -37,7 +37,8 @@ sudo -u "${USER_NAME}" mkdir -p \
   "${WORKSPACE_DIR}/apptainer" \
   "${WORKSPACE_DIR}/experiments/cases" \
   "${WORKSPACE_DIR}/experiments/runs" \
-  "${WORKSPACE_DIR}/slurm/templates"
+  "${WORKSPACE_DIR}/slurm/templates" \
+  "${WORKSPACE_DIR}/slurm/lib"
 
 echo "[2/6] Copy solver binary + sif..."
 sudo install -m 0755 -o "${USER_NAME}" -g "${USER_NAME}" "${SRC_BIN}" \
@@ -76,6 +77,11 @@ sudo install -m 0755 -o "${USER_NAME}" -g "${USER_NAME}" "${REPO_ROOT}/slurm/use
   "${WORKSPACE_DIR}/slurm/run_pcg_case.sbatch"
 sudo install -m 0755 -o "${USER_NAME}" -g "${USER_NAME}" "${REPO_ROOT}/slurm/user/templates/compare_x.sbatch" \
   "${WORKSPACE_DIR}/slurm/compare_x.sbatch"
+
+# Apptainer GPU helper (required by templates)
+sudo install -m 0644 -o "${USER_NAME}" -g "${USER_NAME}" \
+  "${REPO_ROOT}/slurm/lib/apptainer_gpu_env.sh" \
+  "${WORKSPACE_DIR}/slurm/lib/apptainer_gpu_env.sh"
 
 echo "[4/6] Create slurm/env.sh if missing..."
 if [[ ! -f "${WORKSPACE_DIR}/slurm/env.sh" ]]; then

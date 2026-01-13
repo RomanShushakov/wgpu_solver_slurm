@@ -14,6 +14,10 @@ bash scripts/12_undo_create_accounts_users.sh USER_NAME=user3 ACCOUNT_NAME=custo
 # (these env vars are used by your submit wrappers/templates; harmless during init)
 FORCE_REWRITE_DEF=1 FORCE_REBUILD_IMAGE=1 bash init_local.sh
 bash init_local.sh
+
+sudo install -d -m 1777 /var/log/slurm/gpu-metrics
+sudo ls -ld /var/log/slurm/gpu-metrics
+
 bash enable_gpu_tres.sh
 
 # Step 10-11: DB + slurmdbd accounting
