@@ -61,6 +61,18 @@ sudo apt-get purge -y \
   munge libmunge2 \
   || true
 
+# Read StateSaveLocation from slurm.conf if present, otherwise default
+STATE_DIR="$(awk -F= '/^StateSaveLocation=/{print $2}' /etc/slurm/slurm.conf 2>/dev/null | tail -n1)"
+STATE_DIR="${STATE_DIR:-/var/spool/slurmctld}"
+
+# Wipe Slurm state so job IDs reset
+sudo rm -rf "$STATE_DIR" /var/spool/slurmctld /var/spool/slurmd /var/lib/slurm 2>/dev/null || true
+
+# Recreate required dirs with correct ownership (so init doesn’t fail later)
+sudo mkdir -p /var/spool/slurmctld /var/spool/slurmd /var/log/slurm /run/slurm
+sudo chown -R slurm:slurm /var/spool/slurmctld /var/spool/slurmd /var/log/slurm /run/slurm
+sudo chmod 0755 /var/log/slurm /run/slurm
+
 # Always remove slurmdbd + mysql plugin (we reinstall deterministically)
 sudo apt-get purge -y slurmdbd slurm-wlm-mysql-plugin || true
 sudo rm -f /etc/slurm/slurmdbd.conf || true
