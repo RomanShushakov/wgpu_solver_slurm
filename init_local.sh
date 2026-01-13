@@ -73,11 +73,56 @@ fi
 
 apptainer version || { echo "ERROR: apptainer install failed"; exit 1; }
 
-log "Optional: build SIF if missing"
+log "Optional: build SIF + DEF (portable Vulkan runtime)"
 IMAGE="${IMAGE:-${REPO_ROOT}/apptainer/solver-runtime.sif}"
 DEF="${DEF:-${REPO_ROOT}/apptainer/solver-runtime.def}"
+FORCE_REBUILD_IMAGE="${FORCE_REBUILD_IMAGE:-0}"
+FORCE_REWRITE_DEF="${FORCE_REWRITE_DEF:-0}"
 
-if [[ ! -f "${IMAGE}" && -f "${DEF}" ]]; then
+mkdir -p "${REPO_ROOT}/apptainer"
+
+# Write a known-good runtime definition if missing (or if forced).
+# This image is intentionally a *runtime* only; GPU driver libs + devices come from the host via `apptainer exec --nv`.
+if [[ ! -f "${DEF}" || "${FORCE_REWRITE_DEF}" -eq 1 ]]; then
+  cat > "${DEF}" <<'EOF'
+Bootstrap: docker
+From: debian:bookworm-slim
+
+%post
+  set -e
+  apt-get update
+  apt-get install -y --no-install-recommends \
+    ca-certificates \
+    libvulkan1 \
+    vulkan-tools \
+    mesa-vulkan-drivers \
+    libstdc++6 \
+    libgcc-s1 \
+    libglvnd0 \
+    libegl1 \
+    libgl1 \
+    libdrm2 \
+    libx11-6 \
+    libxext6 \
+    libxrandr2 \
+    libxrender1 \
+    libxcb1 \
+    libxau6 \
+    libxdmcp6 \
+  && rm -rf /var/lib/apt/lists/*
+
+%environment
+  export LC_ALL=C
+  export LANG=C
+  export RUST_BACKTRACE=1
+
+%runscript
+  exec "$@"
+EOF
+fi
+
+# Build SIF if missing (or forced).
+if [[ ! -f "${IMAGE}" || "${FORCE_REBUILD_IMAGE}" -eq 1 ]]; then
   sudo apptainer build "${IMAGE}" "${DEF}"
 fi
 
