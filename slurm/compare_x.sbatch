@@ -29,13 +29,6 @@ if [[ -z "${APPTAINER_GPU}" && -n "${SLURM_JOB_GPUS:-}" ]]; then
   APPTAINER_GPU="--nv"
 fi
 
-# Bind host Vulkan + GLVND config into the container (required for NVIDIA Vulkan ICD discovery)
-VULKAN_BINDS=()
-[[ -d /etc/vulkan ]] && VULKAN_BINDS+=(--bind /etc/vulkan:/etc/vulkan)
-[[ -d /usr/share/vulkan ]] && VULKAN_BINDS+=(--bind /usr/share/vulkan:/usr/share/vulkan)
-[[ -d /usr/share/glvnd ]] && VULKAN_BINDS+=(--bind /usr/share/glvnd:/usr/share/glvnd)
-[[ -d /etc/glvnd ]] && VULKAN_BINDS+=(--bind /etc/glvnd:/etc/glvnd)
-
 # Prefer Vulkan backend in wgpu
 export WGPU_BACKEND="${WGPU_BACKEND:-vulkan}"
 
@@ -51,14 +44,21 @@ fi
 
 X="${OUT_DIR}/x.bin"
 
-apptainer exec ${APPTAINER_GPU} "${VULKAN_BINDS[@]}" --bind "${ROOT_DIR}:${ROOT_DIR}" "${IMAGE}" bash -lc "
-  set -euo pipefail
-  cd '${ROOT_DIR}'
-  (command -v vulkaninfo >/dev/null 2>&1 && vulkaninfo --summary) || true
-  '${BIN}' compare-x \
-    --x-ref '${X_REF}' \
-    --x '${X}' \
-    --rel-tol '${CMP_REL_TOL}' \
-    --abs-tol '${CMP_ABS_TOL}' \
-    --top-k '${TOP_K}'
+source "$ROOT_DIR/slurm/lib/apptainer_gpu_env.sh"
+GPU_BINDS=( $(build_gpu_binds) )
+
+apptainer exec --nv \
+  "${GPU_BINDS[@]}" \
+  --bind "$ROOT_DIR:$ROOT_DIR" \
+  "$IMAGE" bash -c "
+    set -euo pipefail
+    $(print_gpu_env_exports)
+    cd '${ROOT_DIR}'
+    (command -v vulkaninfo >/dev/null 2>&1 && vulkaninfo --summary) || true
+    '${BIN}' compare-x \
+      --x-ref '${X_REF}' \
+      --x '${X}' \
+      --rel-tol '${CMP_REL_TOL}' \
+      --abs-tol '${CMP_ABS_TOL}' \
+      --top-k '${TOP_K}'
 "

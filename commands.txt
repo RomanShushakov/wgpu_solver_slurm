@@ -12,13 +12,7 @@ bash scripts/12_undo_create_accounts_users.sh USER_NAME=user3 ACCOUNT_NAME=custo
 
 # init base single-node slurm + apptainer runtime
 # (these env vars are used by your submit wrappers/templates; harmless during init)
-CASE_DIR=./experiments/cases/test \
-OUT_DIR=./experiments/runs/test \
-X_REF=./experiments/cases/test/x_ref.bin \
-REL_TOL=1e-4 \
-ABS_TOL=1e-7 \
-CMP_REL_TOL=1e-3 \
-CMP_ABS_TOL=1e-2 \
+FORCE_REWRITE_DEF=1 FORCE_REBUILD_IMAGE=1 bash init_local.sh
 bash init_local.sh
 bash enable_gpu_tres.sh
 

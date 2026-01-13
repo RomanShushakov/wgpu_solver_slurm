@@ -18,50 +18,20 @@ cd "${ROOT_DIR}"
 : "${MAX_ITERS:=2000}"
 : "${REL_TOL:=1e-4}"
 : "${ABS_TOL:=1e-7}"
-: "${APPTAINER_GPU:=}"
-
-# Auto-enable NVIDIA passthrough for GPU jobs unless user overrides
-if [[ -z "${APPTAINER_GPU}" && -n "${SLURM_JOB_GPUS:-}" ]]; then
-  APPTAINER_GPU="--nv"
-fi
-
-# Bind host Vulkan + GLVND config into the container (required for NVIDIA Vulkan ICD discovery)
-VULKAN_BINDS=()
-[[ -d /etc/vulkan ]] && VULKAN_BINDS+=(--bind /etc/vulkan:/etc/vulkan)
-[[ -d /usr/share/vulkan ]] && VULKAN_BINDS+=(--bind /usr/share/vulkan:/usr/share/vulkan)
-[[ -d /usr/share/glvnd ]] && VULKAN_BINDS+=(--bind /usr/share/glvnd:/usr/share/glvnd)
-[[ -d /etc/glvnd ]] && VULKAN_BINDS+=(--bind /etc/glvnd:/etc/glvnd)
-
-# Prefer Vulkan backend in wgpu
-export WGPU_BACKEND="${WGPU_BACKEND:-vulkan}"
-
-# Only force VK_ICD_FILENAMES if the file exists (and will be visible via binds above)
-if [[ -z "${VK_ICD_FILENAMES:-}" ]]; then
-  if [[ -f /etc/vulkan/icd.d/nvidia_icd.json ]]; then
-    export VK_ICD_FILENAMES=/etc/vulkan/icd.d/nvidia_icd.json
-  elif [[ -f /usr/share/vulkan/icd.d/nvidia_icd.json ]]; then
-    export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_icd.json
-  fi
-fi
-
 
 OUT_X="${OUT_DIR}/x.bin"
 OUT_METRICS="${OUT_DIR}/metrics.json"
 LOG_DIR="${OUT_DIR}/slurm_logs"
 mkdir -p "${OUT_DIR}" "${LOG_DIR}"
 
-# Send job logs next to the run outputs
-#SBATCH --output=slurm-pcg-%j.out
-#SBATCH --error=slurm-pcg-%j.err
-# Note: SBATCH directives cannot use shell vars, so we redirect in shell:
+# Redirect logs next to run outputs
 exec >"${LOG_DIR}/pcg-${SLURM_JOB_ID}.out" 2>"${LOG_DIR}/pcg-${SLURM_JOB_ID}.err"
 
-# Bind /dev/dri only if it exists (WSL-safe)
-DRI_BIND=""
-if [[ -d /dev/dri ]]; then
-  DRI_BIND="--bind /dev/dri:/dev/dri"
-fi
+# Optional bind /dev/dri (safe no-op on systems without it)
+DRI_BIND=()
+[[ -d /dev/dri ]] && DRI_BIND+=(--bind /dev/dri:/dev/dri)
 
+# GPU snapshots directory (must be 1777 on host; init_local.sh does this)
 GPU_LOG_DIR="/var/log/slurm/gpu-metrics"
 mkdir -p "${GPU_LOG_DIR}" 2>/dev/null || true
 
@@ -72,14 +42,21 @@ if command -v nvidia-smi >/dev/null 2>&1; then
     >> "${GPU_LOG_DIR}/gpu-${SLURM_JOB_ID}.csv" || true
 fi
 
-apptainer exec ${APPTAINER_GPU} \
+# --- Apptainer GPU env + binds (critical) ---
+source "${ROOT_DIR}/slurm/lib/apptainer_gpu_env.sh"
+GPU_BINDS=( $(build_gpu_binds) )
+
+apptainer exec --nv \
+  "${GPU_BINDS[@]}" \
+  "${DRI_BIND[@]}" \
   --bind "${ROOT_DIR}:${ROOT_DIR}" \
-  ${DRI_BIND} \
-  "${IMAGE}" bash -lc "
+  "${IMAGE}" bash -c "
     set -euo pipefail
+    $(print_gpu_env_exports)
     cd '${ROOT_DIR}'
-  (command -v vulkaninfo >/dev/null 2>&1 && vulkaninfo --summary) || true
-    '${BIN}' run-pcg-case \
+    (command -v vulkaninfo >/dev/null 2>&1 && vulkaninfo --summary) || true
+
+    '${BIN}' --backend '${BACKEND}' run-pcg-case \
       --case-dir '${CASE_DIR}' \
       --max-iters '${MAX_ITERS}' \
       --rel-tol '${REL_TOL}' \

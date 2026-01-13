@@ -89,19 +89,14 @@ Bootstrap: docker
 From: debian:bookworm-slim
 
 %post
-  set -e
   apt-get update
   apt-get install -y --no-install-recommends \
     ca-certificates \
     libvulkan1 \
     vulkan-tools \
-    mesa-vulkan-drivers \
-    libstdc++6 \
-    libgcc-s1 \
     libglvnd0 \
     libegl1 \
     libgl1 \
-    libdrm2 \
     libx11-6 \
     libxext6 \
     libxrandr2 \
@@ -109,7 +104,16 @@ From: debian:bookworm-slim
     libxcb1 \
     libxau6 \
     libxdmcp6 \
+    libdrm2 \
+    libstdc++6 \
+    libgcc-s1 \
   && rm -rf /var/lib/apt/lists/*
+
+  mkdir -p \
+    /etc/vulkan/icd.d \
+    /usr/share/vulkan/icd.d \
+    /usr/share/glvnd/egl_vendor.d \
+    /usr/share/glvnd/glx_vendor.d
 
 %environment
   export LC_ALL=C

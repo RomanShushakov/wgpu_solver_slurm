@@ -17,32 +17,6 @@ cd "${ROOT_DIR}"
 : "${CMP_REL_TOL:=1e-5}"
 : "${CMP_ABS_TOL:=1e-3}"
 : "${TOP_K:=10}"
-: "${APPTAINER_GPU:=}"
-
-# Auto-enable NVIDIA passthrough for GPU jobs unless user overrides
-if [[ -z "${APPTAINER_GPU}" && -n "${SLURM_JOB_GPUS:-}" ]]; then
-  APPTAINER_GPU="--nv"
-fi
-
-# Bind host Vulkan + GLVND config into the container (required for NVIDIA Vulkan ICD discovery)
-VULKAN_BINDS=()
-[[ -d /etc/vulkan ]] && VULKAN_BINDS+=(--bind /etc/vulkan:/etc/vulkan)
-[[ -d /usr/share/vulkan ]] && VULKAN_BINDS+=(--bind /usr/share/vulkan:/usr/share/vulkan)
-[[ -d /usr/share/glvnd ]] && VULKAN_BINDS+=(--bind /usr/share/glvnd:/usr/share/glvnd)
-[[ -d /etc/glvnd ]] && VULKAN_BINDS+=(--bind /etc/glvnd:/etc/glvnd)
-
-# Prefer Vulkan backend in wgpu
-export WGPU_BACKEND="${WGPU_BACKEND:-vulkan}"
-
-# Only force VK_ICD_FILENAMES if the file exists (and will be visible via binds above)
-if [[ -z "${VK_ICD_FILENAMES:-}" ]]; then
-  if [[ -f /etc/vulkan/icd.d/nvidia_icd.json ]]; then
-    export VK_ICD_FILENAMES=/etc/vulkan/icd.d/nvidia_icd.json
-  elif [[ -f /usr/share/vulkan/icd.d/nvidia_icd.json ]]; then
-    export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_icd.json
-  fi
-fi
-
 
 X="${OUT_DIR}/x.bin"
 LOG_DIR="${OUT_DIR}/slurm_logs"
@@ -50,18 +24,24 @@ mkdir -p "${LOG_DIR}"
 
 exec >"${LOG_DIR}/cmp-${SLURM_JOB_ID}.out" 2>"${LOG_DIR}/cmp-${SLURM_JOB_ID}.err"
 
-DRI_BIND=""
-if [[ -d /dev/dri ]]; then
-  DRI_BIND="--bind /dev/dri:/dev/dri"
-fi
+# Optional bind /dev/dri
+DRI_BIND=()
+[[ -d /dev/dri ]] && DRI_BIND+=(--bind /dev/dri:/dev/dri)
 
-apptainer exec ${APPTAINER_GPU} \
+# --- Apptainer GPU env + binds (critical) ---
+source "${ROOT_DIR}/slurm/lib/apptainer_gpu_env.sh"
+GPU_BINDS=( $(build_gpu_binds) )
+
+apptainer exec --nv \
+  "${GPU_BINDS[@]}" \
+  "${DRI_BIND[@]}" \
   --bind "${ROOT_DIR}:${ROOT_DIR}" \
-  ${DRI_BIND} \
-  "${IMAGE}" bash -lc "
+  "${IMAGE}" bash -c "
     set -euo pipefail
+    $(print_gpu_env_exports)
     cd '${ROOT_DIR}'
-  (command -v vulkaninfo >/dev/null 2>&1 && vulkaninfo --summary) || true
+    (command -v vulkaninfo >/dev/null 2>&1 && vulkaninfo --summary) || true
+
     '${BIN}' compare-x \
       --x-ref '${X_REF}' \
       --x '${X}' \
