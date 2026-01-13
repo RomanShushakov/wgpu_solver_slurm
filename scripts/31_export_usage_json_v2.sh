@@ -96,7 +96,7 @@ read_gpu_snapshot_from_combined() {
 }
 
 # Augment each sacct line with:
-# gpu_util_start|gpu_mem_used_start|gpu_power_start|gpu_temp_start|gpu_util_end|gpu_mem_used_end|gpu_power_end|gpu_temp_end
+# gpu_util_start|gpu_mem_used_start|gpu_mem_util_start|gpu_mem_total_start|gpu_util_end|gpu_mem_used_end|gpu_mem_util_end|gpu_mem_total_end
 AUGMENTED="$(mktemp)"
 trap 'rm -f "${AUGMENTED}"' EXIT
 
@@ -147,17 +147,8 @@ jq -Rn \
         end:         ($f[11] // ""),
         job_name:    ($f[12] // ""),
 
-        # Option-A snapshots (first GPU row), may be null if no logs
-        gpu_util_start:       (($f[13] // "") | to_num_or_null),
-        gpu_mem_used_start:   (($f[14] // "") | to_num_or_null),
-        gpu_power_start:      (($f[15] // "") | to_num_or_null),
-        gpu_temp_start:       (($f[16] // "") | to_num_or_null),
-
-        gpu_util_end:         (($f[17] // "") | to_num_or_null),
-        gpu_mem_used_end:     (($f[18] // "") | to_num_or_null),
-        gpu_power_end:        (($f[19] // "") | to_num_or_null),
-        gpu_temp_end:         (($f[20] // "") | to_num_or_null)
-
+        # Option-A snapshots from gpu-<jobid>.csv (first GPU row), may be null if no logs
+        # Parsed order: util_gpu | mem_used | util_mem | mem_total
         gpu_util_start:       (($f[13] // "") | to_num_or_null),
         gpu_mem_used_start:   (($f[14] // "") | to_num_or_null),
         gpu_mem_util_start:   (($f[15] // "") | to_num_or_null),
