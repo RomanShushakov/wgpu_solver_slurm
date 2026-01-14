@@ -44,24 +44,27 @@ jq -r \
   --arg price_gpu_hr     "${PRICE_GPU_HR:-0}" \
   --arg price_billing_hr "${PRICE_BILLING_HR:-0}" '
   def to_num:
-    if . == null or . == "" then 0
-    else (try tonumber catch 0)
-    end;
+    if . == null or . == "" then 0 else (try tonumber catch 0) end;
 
   def sec_to_hr($sec): (($sec | to_num) / 3600);
+  def cost($sec; $price_hr): (sec_to_hr($sec) * ($price_hr | to_num));
 
-  def cost($sec; $price_hr):
-    (sec_to_hr($sec) * ($price_hr | to_num));
-
-  # Determine where the jobs array is, and ignore non-object entries
   def jobs_stream:
-    if (type == "object" and (.jobs? | type == "array")) then .jobs[]
-    elif (type == "array") then .[]
-    else empty
-    end
-    | select(type == "object");
+    def walk($x):
+      if ($x|type) == "object" and (($x.jobs? | type?) == "array") then
+        $x.jobs[] | walk(.)
+      elif ($x|type) == "array" then
+        $x[] | walk(.)
+      elif ($x|type) == "object" then
+        $x
+      else
+        empty
+      end;
 
-  # header
+    walk(.)
+    | select(type=="object")
+    | select(has("job_id") and has("user"));
+
   [
     "user","account","job_id",
     "cpu_sec","gpu_sec","billing_sec",
