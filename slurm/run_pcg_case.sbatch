@@ -36,9 +36,7 @@ DRI_BIND=()
 source "${ROOT_DIR}/slurm/lib/apptainer_gpu_env.sh"
 GPU_BINDS=( $(build_gpu_binds) )
 
-# Standardized provider-side GPU snapshots:
-#   /var/log/slurm/gpu-metrics/job-<JOBID>-start.csv
-#   /var/log/slurm/gpu-metrics/job-<JOBID>-end.csv
+# Run inside gpu_wrap so we capture start/end snapshots into /var/log/slurm/gpu-metrics/job-<id>-*.csv
 gpu_wrap apptainer exec --nv \
   "${GPU_BINDS[@]}" \
   "${DRI_BIND[@]}" \

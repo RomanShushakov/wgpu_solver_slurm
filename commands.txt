@@ -172,10 +172,11 @@ sudo bash scripts/31_export_usage_json_v2.sh --all-users \
   --out usage/usage_v2.json
 
 # summarize
-bash scripts/32_summarize_usage.sh usage/usage_v2.json usage/usage_summary.json
+bash scripts/32_summarize_usage_v2.sh --in usage/usage_v2.json --out usage/summary_v2.json
 
 # report
-bash scripts/33_report_usage.sh usage/usage_summary.json usage/usage_report.md usage/usage_report.csv
+PRICE_GPU_HR=1.50 PRICE_CPU_HR=0.05 PRICE_BILLING_HR=0.00 \
+  bash scripts/33_export_billing_v2.sh --in usage/usage_v2.json --out usage/billing_v2.csv
 
 
 ###############################################################################

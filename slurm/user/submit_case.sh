@@ -20,6 +20,7 @@ log "PARTITION=${PARTITION}"
 RUN_LOG_DIR="${OUT_DIR}/slurm_logs"
 mkdir -p "${RUN_LOG_DIR}"
 
+# Export env for sbatch scripts
 export IMAGE BIN CASE_DIR OUT_DIR BACKEND MAX_ITERS REL_TOL ABS_TOL APPTAINER_GPU
 export X_REF CMP_REL_TOL CMP_ABS_TOL TOP_K
 
@@ -29,6 +30,7 @@ CMP="./slurm/compare_x.sbatch"
 require_file "${PCG}"
 require_file "${CMP}"
 
+# ---- PCG: GPU job (allocates GPU) ----
 JOB1="$(sbatch --parsable \
   --partition="${PARTITION}" \
   --gres=gpu:1 \
@@ -39,6 +41,8 @@ JOB1="$(sbatch --parsable \
   "${PCG}")"
 log "PCG job: ${JOB1}"
 
+# ---- COMPARE: CPU-only job (no GPU allocation) ----
+# NOTE: Do NOT request --gres here.
 JOB2="$(sbatch --parsable \
   --dependency=afterok:${JOB1} \
   --partition="${PARTITION}" \
@@ -51,9 +55,6 @@ log "COMPARE job: ${JOB2} (afterok:${JOB1})"
 
 log "Track: squeue"
 log "Accounting: sacct -X -j ${JOB1},${JOB2} --format=JobIDRaw,User,Account,State,Elapsed,AllocTRES%40"
-
-RUN_LOG_DIR="${OUT_DIR}/slurm_logs"
-mkdir -p "${RUN_LOG_DIR}"
 
 JOB_IDS_FILE="${RUN_LOG_DIR}/job_ids.txt"
 {

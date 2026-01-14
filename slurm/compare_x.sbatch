@@ -28,17 +28,12 @@ exec >"${LOG_DIR}/cmp-${SLURM_JOB_ID}.out" 2>"${LOG_DIR}/cmp-${SLURM_JOB_ID}.err
 DRI_BIND=()
 [[ -d /dev/dri ]] && DRI_BIND+=(--bind /dev/dri:/dev/dri)
 
-# Apptainer GPU env + binds (harmless if no GPU needed)
-source "${ROOT_DIR}/slurm/lib/apptainer_gpu_env.sh"
-GPU_BINDS=( $(build_gpu_binds) )
-
-apptainer exec --nv \
-  "${GPU_BINDS[@]}" \
+# Compare is CPU-only: no --nv, no gpu_wrap, no Vulkan env forcing
+apptainer exec \
   "${DRI_BIND[@]}" \
   --bind "${ROOT_DIR}:${ROOT_DIR}" \
   "${IMAGE}" bash -c "
     set -euo pipefail
-    $(print_gpu_env_exports)
     cd '${ROOT_DIR}'
     '${BIN}' compare-x \
       --x-ref '${X_REF}' \
