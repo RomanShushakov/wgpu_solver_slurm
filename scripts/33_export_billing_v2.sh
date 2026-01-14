@@ -128,6 +128,3 @@ echo "  PRICE_GPU_HR=$PRICE_GPU_HR"
 echo "  PRICE_BILLING_HR=$PRICE_BILLING_HR"
 echo
 head -n 20 "$OUT"
-EOF
-
-chmod +x scripts/33_export_billing_v2.sh
