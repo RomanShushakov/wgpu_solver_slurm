@@ -48,11 +48,18 @@ jq -r \
     else (try tonumber catch 0)
     end;
 
-  def sec_to_hr($sec):
-    (($sec | to_num) / 3600);
+  def sec_to_hr($sec): (($sec | to_num) / 3600);
 
   def cost($sec; $price_hr):
     (sec_to_hr($sec) * ($price_hr | to_num));
+
+  # Determine where the jobs array is, and ignore non-object entries
+  def jobs_stream:
+    if (type == "object" and (.jobs? | type == "array")) then .jobs[]
+    elif (type == "array") then .[]
+    else empty
+    end
+    | select(type == "object");
 
   # header
   [
@@ -63,7 +70,7 @@ jq -r \
     "total_cost"
   ] | @csv,
 
-  ((if type=="array" then . else (.jobs // []) end)[]?
+  (jobs_stream
     | {
         user: (.user // ""),
         account: (.account // ""),
