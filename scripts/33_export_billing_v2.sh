@@ -54,11 +54,6 @@ jq -r \
   def cost($sec; $price_hr):
     (sec_to_hr($sec) * ($price_hr | to_num));
 
-  def csv_escape:
-    tostring
-    | gsub("\""; "\"\"")
-    | "\"" + . + "\"";
-
   # header
   [
     "user","account","job_id",
@@ -68,7 +63,7 @@ jq -r \
     "total_cost"
   ] | @csv,
 
-  (.jobs[]?
+  ((if type=="array" then . else (.jobs // []) end)[]?
     | {
         user: (.user // ""),
         account: (.account // ""),
