@@ -10,6 +10,7 @@ source "./slurm/common.sh"
 fix_unicode_dashes_here
 ensure_env
 
+log "ACCOUNT=${ACCOUNT}"
 log "ROOT_DIR=${ROOT_DIR}"
 log "CASE_DIR=${CASE_DIR}"
 log "OUT_DIR=${OUT_DIR}"
@@ -32,6 +33,7 @@ require_file "${CMP}"
 
 # ---- PCG: GPU job (allocates GPU) ----
 JOB1="$(sbatch --parsable \
+  --account="${ACCOUNT}" \
   --partition="${PARTITION}" \
   --gres=gpu:1 \
   --time="${SBATCH_TIME}" --mem="${SBATCH_MEM}" --cpus-per-task="${SBATCH_CPUS}" \
@@ -44,6 +46,7 @@ log "PCG job: ${JOB1}"
 # ---- COMPARE: CPU-only job (no GPU allocation) ----
 # NOTE: Do NOT request --gres here.
 JOB2="$(sbatch --parsable \
+  --account="${ACCOUNT}" \
   --dependency=afterok:${JOB1} \
   --partition="${PARTITION}" \
   --time="00:05:00" --mem="512M" --cpus-per-task="1" \

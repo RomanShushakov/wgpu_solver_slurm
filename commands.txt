@@ -295,3 +295,32 @@ CMP_JOB_ID=$(sbatch --parsable \
   slurm/compare_x.sbatch)
 
 echo "CMP job submitted: $CMP_JOB_ID (afterok:$PCG_JOB_ID)"
+
+
+Full manual purge:
+
+# 0) Stop services
+sudo systemctl stop slurmd slurmctld slurmdbd || true
+
+# 1) Kill any leftover slurm daemons if needed
+sudo pkill -9 slurmctld slurmd slurmdbd 2>/dev/null || true
+
+# 2) Remove slurmctld job-id / state (THIS resets job numbering)
+sudo rm -rf /var/spool/slurmctld/*
+
+# 3) Remove slurmd spool (optional but good for clean)
+sudo rm -rf /var/spool/slurmd/*
+
+# 4) Clear logs (optional)
+sudo rm -f /var/log/slurm/*.log
+
+# 5) Clear GPU metrics logs (optional)
+sudo rm -f /var/log/slurm/gpu-metrics/*
+
+# 6) Start services back
+sudo systemctl start slurmdbd
+sudo systemctl start slurmctld
+sudo systemctl start slurmd
+
+# 7) Verify
+scontrol ping

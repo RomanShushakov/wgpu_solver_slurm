@@ -20,6 +20,19 @@ ensure_env() {
   : "${IMAGE:?}"
   : "${PARTITION:?}"
 
+  # Resolve ACCOUNT deterministically (do not rely on Slurm default resolution)
+  # Priority:
+  #   1) env.sh / caller provided ACCOUNT
+  #   2) SlurmDB DefaultAccount for this UNIX user
+  #   3) Fail loudly
+  ACCOUNT="${ACCOUNT:-}"
+  if [[ -z "${ACCOUNT}" ]]; then
+    ACCOUNT="$(sacctmgr -n -P show user "${USER}" format=DefaultAccount 2>/dev/null | head -n1 || true)"
+  fi
+  [[ -n "${ACCOUNT}" ]] || die "Could not resolve ACCOUNT for user=${USER}. Set ACCOUNT in slurm/env.sh or fix sacctmgr DefaultAccount."
+
+  export ACCOUNT
+
   mkdir -p "${OUT_DIR}"
 }
 
