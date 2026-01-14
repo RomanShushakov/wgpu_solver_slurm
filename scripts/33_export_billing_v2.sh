@@ -49,6 +49,7 @@ jq -r \
   def sec_to_hr($sec): (($sec | to_num) / 3600);
   def cost($sec; $price_hr): (sec_to_hr($sec) * ($price_hr | to_num));
 
+  # Find job objects anywhere in the input
   def jobs_stream:
     def walk($x):
       if ($x|type) == "object" and (($x.jobs? | type?) == "array") then
@@ -65,6 +66,7 @@ jq -r \
     | select(type=="object")
     | select(has("job_id") and has("user"));
 
+  # header
   [
     "user","account","job_id",
     "cpu_sec","gpu_sec","billing_sec",
@@ -73,6 +75,7 @@ jq -r \
     "total_cost"
   ] | @csv,
 
+  # rows
   (jobs_stream
     | {
         user: (.user // ""),
