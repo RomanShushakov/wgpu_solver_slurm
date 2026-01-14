@@ -93,13 +93,14 @@ jq -r \
   ] | @csv,
 
   (jobs_stream
+    | . as $j
     | {
-        user: (.user // ""),
-        account: (.account // ""),
-        job_id: (.job_id // ""),
-        cpu_sec: (.cpu_seconds // 0),
-        gpu_sec: (.gpu_seconds // 0),
-        billing_sec: (.billing_seconds // 0)
+        user:        ($j.user // ""),
+        account:     ($j.account // ""),
+        job_id:      ($j.job_id // ""),
+        cpu_sec:     ($j.cpu_seconds // 0),
+        gpu_sec:     ($j.gpu_seconds // 0),
+        billing_sec: ($j.billing_seconds // 0)
       }
     | .cpu_hours     = sec_to_hr(.cpu_sec)
     | .gpu_hours     = sec_to_hr(.gpu_sec)
@@ -111,12 +112,22 @@ jq -r \
     | .total_cost   = (.cpu_cost + .gpu_cost + .billing_cost)
 
     | [
-        .user, .account, .job_id,
-        (.cpu_sec|to_num), (.gpu_sec|to_num), (.billing_sec|to_num),
-        .cpu_hours, .gpu_hours, .billing_hours,
-        .cpu_cost, .gpu_cost, .billing_cost,
-        .total_cost
+        .user,
+        .account,
+        .job_id,
+        (.cpu_sec|to_num),
+        (.gpu_sec|to_num),
+        (.billing_sec|to_num),
+        (.cpu_hours),
+        (.gpu_hours),
+        (.billing_hours),
+        (.cpu_cost),
+        (.gpu_cost),
+        (.billing_cost),
+        (.total_cost)
       ]
+    # IMPORTANT: stringify everything before @csv
+    | map(tostring)
     | @csv
   )
 ' "$IN" > "$OUT"
