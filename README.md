@@ -1,174 +1,141 @@
 # wgpu_solver_slurm
 
-![Rust](https://img.shields.io/badge/Rust-000000?logo=rust&logoColor=white)
 ![Slurm](https://img.shields.io/badge/Slurm-2B2B2B)
 ![Apptainer](https://img.shields.io/badge/Apptainer-663399)
 ![Linux](https://img.shields.io/badge/Linux-000000?logo=linux&logoColor=white)
 ![GPU](https://img.shields.io/badge/GPU-NVIDIA-76B900?logo=nvidia&logoColor=white)
-![License](https://img.shields.io/badge/license-MIT-green)
-![Status](https://img.shields.io/badge/status-demo%2Ftraining-informational)
+![Status](https://img.shields.io/badge/status-learning%20%2F%20building-lightgrey)
 
-Run GPU-enabled numerical workloads under **Slurm** using **Apptainer**, with **SlurmDBD/MariaDB** accounting and scripts to export **usage** and **billing** reports.
+Run GPU-based numerical workloads under **Slurm** using **Apptainer**, with a focus on
+**reproducible execution, accounting, and reporting**, rather than peak performance.
 
-This repository is part of a longer chain of work around numerical methods, sparse linear algebra, iterative solvers, FEM experiments, and GPU execution.
-
-Related repositories:
-
-- https://github.com/RomanShushakov/extended_matrix
-- https://github.com/RomanShushakov/colsol
-- https://github.com/RomanShushakov/iterative_solvers
-- https://github.com/RomanShushakov/finite_element_method
-- https://github.com/RomanShushakov/fea_app
-- https://github.com/RomanShushakov/wgpu_solver_backend
+This repository is a continuation of my work on GPU-accelerated iterative solvers
+(`wgpu_solver_backend`) and explores how such workloads behave when placed into a
+scheduler-driven environment similar to real HPC systems.
 
 ---
 
-## Why this repo exists
+## Why this repository exists
 
-Once a solver runs correctly on a real GPU, the next practical step is understanding how it behaves in a scheduler-driven environment:
+Most examples of GPU compute focus on:
 
-- multiple users
-- resource allocation and limits
-- accounting and reporting
-- containerized execution on GPU nodes
+- single-node execution
+- ad-hoc Docker containers
+- manual GPU access
 
-This repository explores those mechanics in a **small, explicit, and inspectable** setup.
+This repository explores a different question:
 
-The goal is not to build a full HPC platform, but to understand how the pieces fit together in practice.
+> _What does it take to run a custom GPU compute backend as a scheduled job,
+> with resource accounting, isolation, and reproducibility?_
 
----
+To answer that, this repo demonstrates:
 
-## What is implemented
+- a minimal **Slurm** setup with accounting enabled
+- **Apptainer** containers suitable for GPU workloads
+- batch job submission for GPU compute
+- extraction of **usage and billing-style metrics** from Slurm
 
-### 1) Single-node Slurm with accounting
-
-The scripts bootstrap a minimal Slurm setup with:
-
-- `slurmctld`, `slurmd`
-- `munge`
-- `slurmdbd` backed by MariaDB
-- GPU accounting enabled via GRES / TRES (allocation-based)
-
-This is sufficient to model real multi-user behavior on a single GPU node.
+The goal is **understanding the system mechanics**, not building a production cluster.
 
 ---
 
-### 2) Apptainer runtime for GPU jobs
+## What this repository is
 
-Workloads are executed via **Apptainer**, following common HPC practice:
-
-- `apptainer exec --nv` for GPU visibility
-- explicit bind mounts for user workspaces
-- a portable solver runtime packaged as a `.sif`
-
-This keeps execution reproducible while remaining close to production clusters.
-
----
-
-### 3) Two-step job pipeline
-
-A single “case run” consists of two Slurm jobs:
-
-1. **PCG solver job**
-   - runs on a GPU
-   - writes solution output and solver metrics
-
-2. **Compare job**
-   - CPU-only
-   - validates the result against a reference solution
-
-The jobs are chained using Slurm dependencies (`afterok`).
+- A small, self-contained **Slurm + GPU sandbox**
+- A way to run `wgpu_solver_backend` as a **scheduled GPU job**
+- A testbed for:
+  - GPU allocation vs. utilization
+  - Slurm accounting behavior
+  - containerized GPU execution
+  - job-level metrics export (CSV / JSON)
 
 ---
 
-### 4) GPU snapshots (optional)
+## What this repository is not
 
-A lightweight wrapper (`gpu_wrap`) can record start/end snapshots using `nvidia-smi`:
+- Not a full HPC cluster
+- Not a production-grade deployment
+- Not optimized for performance or scale
+- Not a replacement for real cluster tooling
 
-- GPU utilization
-- memory usage
-- power draw and temperature (when supported by hardware)
-
-These snapshots are **diagnostic only** and intentionally kept simple.
-
-They are not used as billing input.
+Everything here is intentionally minimal and explicit.
 
 ---
 
-### 5) Usage, summary, and billing export
+## High-level architecture
 
-Accounting data is exported in three stages:
+- **Slurm**
+  - Controller + compute node
+  - Accounting enabled via `slurmdbd` and MariaDB
+- **Apptainer**
+  - GPU-enabled runtime image
+  - Runs the solver backend without Docker
+- **wgpu_solver_backend**
+  - Invoked as a batch job
+  - Reads binary inputs
+  - Writes results and metrics
 
-- **Usage JSON** — per-job records
-- **Summary JSON** — aggregated by user and account
-- **Billing CSV** — seconds → hours → cost using configurable rates
-
-This mirrors how many real clusters separate accounting, reporting, and pricing.
-
----
-
-## Usage model (important)
-
-Slurm GPU accounting is **allocation-based**, not utilization-based.
-
-In this repository:
-
-- `gpu_seconds` = `elapsed_time × allocated_gpu_count`
-- CPU and billing seconds follow the same principle
-
-GPU utilization snapshots are optional and:
-
-- may be unavailable depending on GPU model / driver
-- are not reliable enough for billing
-- are treated strictly as diagnostics
-
-This repo is structured around that reality rather than trying to infer “true” GPU usage.
+Slurm is responsible for **resource allocation and accounting**.  
+The solver is responsible for **numerical work only**.
 
 ---
 
-## Branches
+## Repository contents
 
-This repository intentionally maintains two branches.
-
-### `master`
-
-- intended for local experimentation and demos
-- minimal assumptions
-- focuses on Slurm mechanics, accounting, and reproducibility
-
-### `cluster`
-
-- used for real GPU cloud instances (e.g. Vultr)
-- contains provider-specific adjustments:
-  - GPU models and device layout
-  - host setup constraints
-- not merged into `master` intentionally
-
-Clusters are not interchangeable in practice, and the branch split makes that explicit.
+- `slurm/` – Slurm configuration files and init scripts
+- `apptainer/` – Definition files and runtime setup
+- `jobs/` – Example `sbatch` scripts for GPU jobs
+- `scripts/` – Helpers for exporting usage / billing data
+- `docs/` – Notes and experiments during setup
 
 ---
 
-## Repository layout (high level)
+## Example workflow (conceptual)
 
-```text
-admin/              # MariaDB + slurmdbd helpers
-apptainer/          # solver runtime image
-scripts/            # provisioning, accounting, export
-slurm/              # sbatch templates and helpers
-solvers/            # solver binary (CLI)
-experiments/        # small test cases
-usage/              # generated usage/billing outputs
-```
+1. Build Apptainer image with GPU support
+2. Start Slurm controller + compute node
+3. Submit a GPU job via `sbatch`
+4. Run `wgpu_solver_backend` inside Apptainer
+5. Export:
+   - job runtime
+   - allocated resources
+   - GPU seconds (as Slurm reports them)
+6. Inspect results and accounting data
+
+---
+
+## Notes on GPU accounting
+
+An important observation confirmed by this setup:
+
+- **Slurm accounts GPU usage by allocation, not by real utilization**
+- A job that reserves a GPU but does little work still consumes GPU time
+- Fine-grained GPU utilization requires external tooling (outside Slurm)
+
+This repo intentionally exposes that behavior rather than hiding it.
+
+---
+
+## Related repositories (same project chain)
+
+- [`wgpu_solver_backend`](https://github.com/RomanShushakov/wgpu_solver_backend) — GPU compute backend (PCG + Block-Jacobi, wgpu-based)
+- [`iterative_solvers`](https://github.com/RomanShushakov/iterative_solvers) — CPU iterative methods (CG / PCG)
+- [`colsol`](https://github.com/RomanShushakov/colsol) — direct-solver experiments (LDLᵀ / column-style elimination)
+- [`extended_matrix`](https://github.com/RomanShushakov/extended_matrix) — Sparse matrix structures and utilities
+- [`finite_element_method`](https://github.com/RomanShushakov/finite_element_method) / [`fea_app`](https://github.com/RomanShushakov/fea_app) – FEM pipeline and problem generation
+
+This repository focuses purely on **execution and scheduling**.
+
+---
 
 ## Status
 
-Feature-complete for **demo and training purposes**:
+- End-to-end workflow working
+- GPU jobs run correctly under Slurm
+- Accounting and metrics export validated
+- Intended as a learning and demonstration environment
 
-- jobs run on real GPUs under Slurm
-- accounting is enabled and validated
-- usage, summary, and billing exports are reproducible
-
-Further work would mainly involve polish or scaling, not core design changes.
+Further extensions (multi-node, MPI, scaling) are intentionally out of scope.
 
 ---
 
