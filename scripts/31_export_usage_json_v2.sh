@@ -58,39 +58,13 @@ where_flags=()
 FIELDS="JobIDRaw,User,Account,Partition,State,ElapsedRaw,AllocCPUS,ReqTRES,AllocTRES,Submit,Start,End,JobName"
 RAW="$(sacct "${sacct_flags[@]}" "${time_flags[@]}" "${where_flags[@]}" -o "${FIELDS}")"
 
-
-# Backward-compat: read combined gpu-<jobid>.csv format:
-# JOBID,START,timestamp,index,uuid,name,util.gpu,util.mem,mem.used,mem.total,power,temp
-# (older logs may have fewer columns; we tolerate that)
-read_gpu_snapshot_from_combined() {
-  local file="$1"
-  local phase="$2"
-  [[ -f "$file" ]] || { echo "|||||"; return 0; }
-
-  awk -F',' -v phase="$phase" '
-    function trim(s){ gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
-    BEGIN{ found=0 }
-    $2==phase {
-      for (i=1; i<=NF; i++) $i=trim($i);
-      util_gpu=$7; util_mem=$8; mem_used=$9; mem_total=$10;
-      power=(NF>=11 ? $11 : "");
-      temp =(NF>=12 ? $12 : "");
-      print util_gpu "|" util_mem "|" mem_used "|" mem_total "|" power "|" temp;
-      found=1;
-      exit
-    }
-    END { if (!found) print "|||||" }
-  ' "$file" 2>/dev/null || echo "|||||"
-}
-
-# Read first GPU row from gpu_wrap CSV snapshot (job-<id>-start.csv / job-<id>-end.csv)
-# Output: util_gpu|util_mem|mem_used|mem_total|power|temp   (or "|||||")
-read_gpu_snapshot_from_wrap() {
+# Read first GPU data row from gpu_wrap output:
+# Header: ts,host,job_id,job_user,index,uuid,name,utilization.gpu,utilization.memory,memory.used,memory.total,power.draw,temperature.gpu
+# Return: util_gpu|util_mem|mem_used|mem_total|power|temp  or "|||||"
+read_gpu_snapshot_wrap() {
   local file="$1"
   [[ -f "$file" ]] || { echo "|||||"; return 0; }
 
-  # Header:
-  # ts,host,job_id,job_user,index,uuid,name,utilization.gpu,utilization.memory,memory.used,memory.total,power.draw,temperature.gpu
   awk -F',' '
     function trim(s){ gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
     NR==2 {
@@ -103,14 +77,21 @@ read_gpu_snapshot_from_wrap() {
       power=$12
       temp=$13
 
-      # Normalize [N/A] -> empty
-      if (power ~ /^\[N\/A\]$/) power=""
-      if (temp  ~ /^\[N\/A\]$/) temp=""
+      # Normalize "[N/A]" -> empty
+      if (util_gpu=="[N/A]") util_gpu=""
+      if (util_mem=="[N/A]") util_mem=""
+      if (mem_used=="[N/A]") mem_used=""
+      if (mem_total=="[N/A]") mem_total=""
+      if (power=="[N/A]") power=""
+      if (temp=="[N/A]") temp=""
 
       print util_gpu "|" util_mem "|" mem_used "|" mem_total "|" power "|" temp
       exit
     }
-    END { }
+    END {
+      # if file exists but has no data rows
+      if (NR < 2) print "|||||"
+    }
   ' "$file" 2>/dev/null || echo "|||||"
 }
 
@@ -121,19 +102,11 @@ while IFS= read -r line; do
   [[ -z "${line}" ]] && continue
   jobid="$(echo "${line}" | cut -d'|' -f1)"
 
-  # Prefer gpu_wrap format (start/end separate)
   sfile="${GPU_LOG_DIR}/job-${jobid}-start.csv"
   efile="${GPU_LOG_DIR}/job-${jobid}-end.csv"
 
-  if [[ -f "${sfile}" || -f "${efile}" ]]; then
-    start_vals="$(read_gpu_snapshot_from_wrap "${sfile}")"
-    end_vals="$(read_gpu_snapshot_from_wrap "${efile}")"
-  else
-    # Fallback: older combined format
-    gfile="${GPU_LOG_DIR}/gpu-${jobid}.csv"
-    start_vals="$(read_gpu_snapshot_from_combined "${gfile}" "START")"
-    end_vals="$(read_gpu_snapshot_from_combined "${gfile}" "END")"
-  fi
+  start_vals="$(read_gpu_snapshot_wrap "${sfile}")"
+  end_vals="$(read_gpu_snapshot_wrap "${efile}")"
 
   echo "${line}|${start_vals}|${end_vals}" >> "${AUGMENTED}"
 done <<< "${RAW}"
@@ -147,9 +120,6 @@ jq -Rn \
   def to_int:
     if . == null or . == "" then 0 else (try (.|tonumber) catch 0) end;
 
-  def num0:
-    if . == null or . == "" then 0 else (try (.|tonumber) catch 0) end;
-
   def to_num_or_null:
     if . == null or . == "" then null else (try (.|tonumber) catch null) end;
 
@@ -157,6 +127,8 @@ jq -Rn \
     ( . // "" )
     | ( capture("(^|,)" + $key + "=(?<n>[0-9]+)")? | .n ) // "0"
     | to_int;
+
+  def num0: (. // 0);
 
   [ inputs
     | select(length > 0)
@@ -176,21 +148,21 @@ jq -Rn \
         end:         ($f[11] // ""),
         job_name:    ($f[12] // ""),
 
-        # Snapshot fields (6 per phase):
-        # util_gpu | util_mem | mem_used | mem_total | power | temp
-        gpu_util_start:       (($f[13] // "") | to_num_or_null),
-        gpu_mem_util_start:   (($f[14] // "") | to_num_or_null),
-        gpu_mem_used_start:   (($f[15] // "") | to_num_or_null),
-        gpu_mem_total_start:  (($f[16] // "") | to_num_or_null),
-        gpu_power_start:      (($f[17] // "") | to_num_or_null),
-        gpu_temp_start:       (($f[18] // "") | to_num_or_null),
+        # gpu_wrap snapshots (first GPU row)
+        # order: util_gpu | util_mem | mem_used | mem_total | power | temp
+        gpu_util_start:      (($f[13] // "") | to_num_or_null),
+        gpu_mem_util_start:  (($f[14] // "") | to_num_or_null),
+        gpu_mem_used_start:  (($f[15] // "") | to_num_or_null),
+        gpu_mem_total_start: (($f[16] // "") | to_num_or_null),
+        gpu_power_start:     (($f[17] // "") | to_num_or_null),
+        gpu_temp_start:      (($f[18] // "") | to_num_or_null),
 
-        gpu_util_end:         (($f[19] // "") | to_num_or_null),
-        gpu_mem_util_end:     (($f[20] // "") | to_num_or_null),
-        gpu_mem_used_end:     (($f[21] // "") | to_num_or_null),
-        gpu_mem_total_end:    (($f[22] // "") | to_num_or_null),
-        gpu_power_end:        (($f[23] // "") | to_num_or_null),
-        gpu_temp_end:         (($f[24] // "") | to_num_or_null)
+        gpu_util_end:        (($f[19] // "") | to_num_or_null),
+        gpu_mem_util_end:    (($f[20] // "") | to_num_or_null),
+        gpu_mem_used_end:    (($f[21] // "") | to_num_or_null),
+        gpu_mem_total_end:   (($f[22] // "") | to_num_or_null),
+        gpu_power_end:       (($f[23] // "") | to_num_or_null),
+        gpu_temp_end:        (($f[24] // "") | to_num_or_null)
       }
     | .billing = (.alloc_tres | tres_int("billing") | if . == 0 then (.alloc_cpus) else . end)
     | .gpu_count = (.alloc_tres | tres_int("gres/gpu"))
@@ -198,9 +170,9 @@ jq -Rn \
     | .billing_seconds = (.elapsed_sec * .billing)
     | .gpu_seconds = (.elapsed_sec * .gpu_count)
 
-    # Null-safe “activity” helpers
-    | .gpu_activity_avg = ( ((.gpu_util_start | num0) + (.gpu_util_end | num0)) / 2 )
-    | .gpu_mem_used_delta = ( (.gpu_mem_used_end | num0) - (.gpu_mem_used_start | num0) )
+    # "real-ish" activity from two-point snapshots (null-safe)
+    | .gpu_activity_avg = ((.gpu_util_start|num0) + (.gpu_util_end|num0)) / 2
+    | .gpu_mem_used_delta = ((.gpu_mem_used_end|num0) - (.gpu_mem_used_start|num0))
   ] as $jobs
   | {
       meta: {
@@ -209,7 +181,7 @@ jq -Rn \
         filter_user: ($user | if . == "" then null else . end),
         filter_account: ($account | if . == "" then null else . end),
         generated_at: (now | todateiso8601),
-        source: "sacct",
+        source: "sacct + gpu_wrap snapshots",
         schema: "usage.v2",
         gpu_log_dir: $gpu_log_dir
       },

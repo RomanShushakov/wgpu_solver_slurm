@@ -6,7 +6,7 @@ set -euo pipefail
 
 export PATH=/usr/local/bin:/usr/bin:/bin:$PATH
 command -v apptainer >/dev/null 2>&1 || { echo "ERROR: apptainer not in PATH"; exit 127; }
-command -v gpu_wrap   >/dev/null 2>&1 || { echo "ERROR: gpu_wrap not in PATH (run scripts/13_install_gpu_wrap.sh)"; exit 127; }
+command -v gpu_wrap   >/dev/null 2>&1 || { echo "ERROR: gpu_wrap not in PATH (/usr/local/bin/gpu_wrap)"; exit 127; }
 
 ROOT_DIR="${SLURM_SUBMIT_DIR:-$(pwd)}"
 cd "${ROOT_DIR}"
@@ -32,22 +32,19 @@ exec >"${LOG_DIR}/pcg-${SLURM_JOB_ID}.out" 2>"${LOG_DIR}/pcg-${SLURM_JOB_ID}.err
 DRI_BIND=()
 [[ -d /dev/dri ]] && DRI_BIND+=(--bind /dev/dri:/dev/dri)
 
-# Auto-enable NVIDIA passthrough when Slurm allocated GPUs (or when SLURM_JOB_GPUS is set)
-APPTAINER_GPU=""
-if [[ -n "${SLURM_JOB_GPUS:-}" || -n "${CUDA_VISIBLE_DEVICES:-}" ]]; then
-  APPTAINER_GPU="--nv"
-fi
-
 # --- Apptainer GPU env + binds (critical) ---
 source "${ROOT_DIR}/slurm/lib/apptainer_gpu_env.sh"
 GPU_BINDS=( $(build_gpu_binds) )
 
-# IMPORTANT: gpu_wrap must wrap the whole apptainer exec to write start/end CSV snapshots
-gpu_wrap apptainer exec ${APPTAINER_GPU} \
+# One standardized GPU snapshot format:
+#   /var/log/slurm/gpu-metrics/job-<JOBID>-start.csv
+#   /var/log/slurm/gpu-metrics/job-<JOBID>-end.csv
+# (Created by gpu_wrap)
+gpu_wrap apptainer exec --nv \
   "${GPU_BINDS[@]}" \
   "${DRI_BIND[@]}" \
   --bind "${ROOT_DIR}:${ROOT_DIR}" \
-  "${IMAGE}" bash -lc "
+  "${IMAGE}" bash -c "
     set -euo pipefail
     $(print_gpu_env_exports)
     cd '${ROOT_DIR}'
