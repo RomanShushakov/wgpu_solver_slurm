@@ -35,92 +35,61 @@ done
 
 command -v jq >/dev/null 2>&1 || { echo "jq is required"; exit 1; }
 [[ -f "$IN" ]] || { echo "ERROR: missing input $IN"; exit 1; }
-
 mkdir -p "$(dirname "$OUT")"
 
-# Debug: count job objects using the SAME stream we will use for CSV
-count="$(jq -r '
-  def jobs_stream:
-    def walk($x):
-      if ($x|type) == "object" and (($x.jobs? | type?) == "array") then $x.jobs[] | walk(.)
-      elif ($x|type) == "array" then $x[] | walk(.)
-      elif ($x|type) == "object" then $x
-      else empty end;
-    walk(.) | select(type=="object") | select(has("job_id") and has("user"));
-  [jobs_stream] | length
-' "$IN")"
-echo "DEBUG: found ${count} job objects in ${IN}" >&2
+# Count jobs (quick sanity)
+jobs_n="$(jq -r '(.jobs|length) // 0' "$IN")"
+echo "DEBUG: .jobs length = ${jobs_n}" >&2
 
-jq -r \
-  --arg price_cpu_hr     "${PRICE_CPU_HR}" \
-  --arg price_gpu_hr     "${PRICE_GPU_HR}" \
-  --arg price_billing_hr "${PRICE_BILLING_HR}" '
-  def to_num:
-    if . == null or . == "" then 0
-    else (try tonumber catch 0)
-    end;
+# Header
+{
+  echo "\"user\",\"account\",\"job_id\",\"cpu_sec\",\"gpu_sec\",\"billing_sec\",\"cpu_hours\",\"gpu_hours\",\"billing_hours\",\"cpu_cost\",\"gpu_cost\",\"billing_cost\",\"total_cost\""
 
-  def sec_to_hr($sec):
-    (($sec | to_num) / 3600);
-
-  def cost($sec; $price_hr):
-    (sec_to_hr($sec) * ($price_hr | to_num));
-
-  def jobs_stream:
-    def walk($x):
-      if ($x|type) == "object" and (($x.jobs? | type?) == "array") then $x.jobs[] | walk(.)
-      elif ($x|type) == "array" then $x[] | walk(.)
-      elif ($x|type) == "object" then $x
-      else empty end;
-    walk(.) | select(type=="object") | select(has("job_id") and has("user"));
-
-  # header
-  [
-    "user","account","job_id",
-    "cpu_sec","gpu_sec","billing_sec",
-    "cpu_hours","gpu_hours","billing_hours",
-    "cpu_cost","gpu_cost","billing_cost",
-    "total_cost"
-  ] | @csv,
-
-  # rows
-  (jobs_stream
-    | {
-        user:        (.user // ""),
-        account:     (.account // ""),
-        job_id:      (.job_id // ""),
-        cpu_sec:     (.cpu_seconds // 0),
-        gpu_sec:     (.gpu_seconds // 0),
-        billing_sec: (.billing_seconds // 0)
-      }
-    | .cpu_hours     = sec_to_hr(.cpu_sec)
-    | .gpu_hours     = sec_to_hr(.gpu_sec)
-    | .billing_hours = sec_to_hr(.billing_sec)
-
-    | .cpu_cost     = cost(.cpu_sec; $price_cpu_hr)
-    | .gpu_cost     = cost(.gpu_sec; $price_gpu_hr)
-    | .billing_cost = cost(.billing_sec; $price_billing_hr)
-    | .total_cost   = (.cpu_cost + .gpu_cost + .billing_cost)
-
+  # Emit jobs as TSV: user account job_id cpu_sec gpu_sec billing_sec
+  jq -r '
+    .jobs[]?
     | [
-        .user,
-        .account,
-        .job_id,
-        (.cpu_sec|to_num),
-        (.gpu_sec|to_num),
-        (.billing_sec|to_num),
-        .cpu_hours,
-        .gpu_hours,
-        .billing_hours,
-        .cpu_cost,
-        .gpu_cost,
-        .billing_cost,
-        .total_cost
+        (.user // ""),
+        (.account // ""),
+        (.job_id // ""),
+        ((.cpu_seconds // 0) | tostring),
+        ((.gpu_seconds // 0) | tostring),
+        ((.billing_seconds // 0) | tostring)
       ]
-    | map(tostring)
-    | @csv
-  )
-' "$IN" > "$OUT"
+    | @tsv
+  ' "$IN" \
+  | awk -F'\t' \
+      -v pcpu="${PRICE_CPU_HR}" \
+      -v pgpu="${PRICE_GPU_HR}" \
+      -v pbill="${PRICE_BILLING_HR}" '
+      function q(s){ gsub(/"/,"\"\"",s); return "\"" s "\"" }
+      function to_num(x){ if (x=="" || x=="null") return 0; return x+0 }
+      BEGIN{
+        # nothing
+      }
+      {
+        user=$1; account=$2; job=$3;
+        cpu_sec=to_num($4); gpu_sec=to_num($5); bill_sec=to_num($6);
+
+        cpu_hr=cpu_sec/3600.0;
+        gpu_hr=gpu_sec/3600.0;
+        bill_hr=bill_sec/3600.0;
+
+        cpu_cost=cpu_hr*(pcpu+0);
+        gpu_cost=gpu_hr*(pgpu+0);
+        bill_cost=bill_hr*(pbill+0);
+
+        total=cpu_cost+gpu_cost+bill_cost;
+
+        # Print with decent precision; adjust if you want more/less
+        printf "%s,%s,%s,%.0f,%.0f,%.0f,%.8f,%.8f,%.8f,%.8f,%.8f,%.8f,%.8f\n",
+          q(user), q(account), q(job),
+          cpu_sec, gpu_sec, bill_sec,
+          cpu_hr, gpu_hr, bill_hr,
+          cpu_cost, gpu_cost, bill_cost, total
+      }
+    '
+} > "$OUT"
 
 echo "OK: wrote $OUT"
 echo "Pricing:"
